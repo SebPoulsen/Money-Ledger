@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Money Ledger</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <h1 class="wordmark">Money Ledger<span>where it actually goes</span></h1>
+    <div class="monthnav">
+      <button type="button" id="prevMonth" class="stepper">‹</button>
+      <div id="monthLabel" class="monthlabel">—</div>
+      <button type="button" id="nextMonth" class="stepper">›</button>
+    </div>
+  </header>
+
+  <section class="quickadd" id="quickadd">
+    <form id="quickaddForm" class="quickadd-row" novalidate>
+      <div class="qa-field qa-type">
+        <label>Type</label>
+        <div class="dirtoggle">
+          <button type="button" data-dir="expense" aria-pressed="true">Spent</button>
+          <button type="button" data-dir="income" aria-pressed="false">Income</button>
+        </div>
+      </div>
+      <div class="qa-field qa-amount">
+        <label for="qaAmount">Amount</label>
+        <input type="number" id="qaAmount" inputmode="decimal" step="1" min="0" placeholder="0.00" required>
+      </div>
+      <div class="qa-field qa-cat">
+        <label for="qaCategory">Category</label>
+        <select id="qaCategory"></select>
+      </div>
+      <div class="qa-field qa-date">
+        <label for="qaDate">Date</label>
+        <input type="date" id="qaDate" required>
+      </div>
+      <div class="qa-field qa-note">
+        <label for="qaNote">Note</label>
+        <input type="text" id="qaNote" placeholder="Optional">
+      </div>
+      <div class="qa-field qa-submitwrap">
+        <label>&nbsp;</label>
+        <button type="submit" class="solid qa-submit">Log it</button>
+      </div>
+    </form>
+  </section>
+
+  <div class="cols">
+    <main>
+      <div class="panel-label">
+        <span>Register</span>
+      </div>
+      <div id="register" class="register"></div>
+    </main>
+
+    <aside class="rail">
+      <section>
+        <div class="panel-label"><span>Summary — this month</span></div>
+        <div class="summary" id="summaryBox"></div>
+      </section>
+
+      <section>
+        <div class="panel-label">
+          <span>Categories</span>
+          <span id="railDirToggle" class="dirtoggle" style="font-size:9px">
+            <button type="button" data-dir="expense" aria-pressed="true">Spent</button>
+            <button type="button" data-dir="income" aria-pressed="false">Income</button>
+          </span>
+        </div>
+        <div id="catList"></div>
+        <form id="addCatForm" class="addcat">
+          <input type="text" id="newCatName" placeholder="New category name">
+          <button type="submit" class="ghost">Add</button>
+        </form>
+        <div class="hint">Total shown: <span id="catCount">—</span>. Click a swatch to recolor, click a name to rename.</div>
+      </section>
+
+      <section>
+        <div class="panel-label"><span>Sync &amp; settings</span></div>
+        <div class="status off" id="syncStatus"><i></i><span class="label">Local only, this device</span></div>
+        <div class="field" style="margin-top:12px">
+          <label for="currencySelect">Currency</label>
+          <select id="currencySelect"></select>
+        </div>
+        <div class="tools">
+          <button type="button" id="driveConnectBtn" class="ghost">Connect Google Drive</button>
+        </div>
+        <div class="hint">Nothing leaves this device unless Drive is connected. Your data would sync directly to your own Drive — no server of ours ever sees it.</div>
+        <div class="dangerzone">
+          <button type="button" id="clearDataBtn" class="danger">Delete this month</button>
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <footer class="colophon">
+    <span>Money Ledger — free to use, free to pass on.</span>
+    <a href="https://sebpoulsen.github.io/Hours-Ledger">Hours Ledger →</a>
+    <span class="right">Built by Sebastian Poulsen</span>
+  </footer>
+</div>
+
+<button type="button" id="fab" class="fab">+ Log</button>
+
+<div class="toast" id="toast"><span class="msg"></span><button type="button" id="toastUndo" hidden>Undo</button></div>
+
+<!-- first-launch intro -->
+<div class="scrim" id="introScrim">
+  <div class="sheet">
+    <h2>Money Ledger</h2>
+    <ol class="intro-steps">
+      <li>Log every expense and every bit of income by hand, as it happens.</li>
+      <li>Come back after a week, or a month, and see where it actually went, by category.</li>
+      <li>Budgets and recurring subscriptions come later — this first version is about logging reality.</li>
+    </ol>
+    <div class="field">
+      <label for="introCurrency">Choose your currency</label>
+      <select id="introCurrency"><option value="">Select…</option></select>
+    </div>
+    <button type="button" id="introStart" class="solid" style="width:100%" disabled>Start logging</button>
+    <p class="intro-note">You can change your currency later from Settings if you pick the wrong one.</p>
+  </div>
+</div>
+
+<!-- edit entry sheet -->
+<div class="scrim" id="editScrim">
+  <div class="sheet">
+    <h2>Edit entry</h2>
+    <form id="editForm" novalidate>
+      <div class="field">
+        <div class="dirtoggle" style="width:100%;display:flex">
+          <button type="button" data-dir="expense" aria-pressed="true" style="flex:1">Spent</button>
+          <button type="button" data-dir="income" aria-pressed="false" style="flex:1">Income</button>
+        </div>
+      </div>
+      <div class="two">
+        <div class="field">
+          <label for="editAmount">Amount</label>
+          <input type="number" id="editAmount" step="1" min="0" required>
+        </div>
+        <div class="field">
+          <label for="editDate">Date</label>
+          <input type="date" id="editDate" required>
+        </div>
+      </div>
+      <div class="field">
+        <label for="editCategory">Category</label>
+        <select id="editCategory"></select>
+      </div>
+      <div class="field">
+        <label for="editNote">Note</label>
+        <input type="text" id="editNote">
+      </div>
+      <div class="sheet-actions">
+        <button type="button" id="editCancel" class="ghost">Cancel</button>
+        <button type="submit" class="solid">Save</button>
+      </div>
+      <div class="sheet-actions">
+        <button type="button" id="editDelete" class="linkbtn">Delete this entry</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
