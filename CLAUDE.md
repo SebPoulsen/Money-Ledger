@@ -56,9 +56,21 @@ something that contradicts a rule below, stop and say which rule.
    Disconnecting Drive must never delete local data. Connecting Drive must
    never silently overwrite one device's data with another's — if two
    devices disagree, surface the conflict, don't auto-resolve it silently.
-6. **Ask before restructuring.** Propose and wait. Do not refactor broadly in
+6. **No sync operation may remove a record the other side hasn't
+   acknowledged.** Neither direction — pushing to Drive nor pulling from
+   it — may cause a record present on one side to disappear unless that
+   side has actually seen it. A whole-file timestamp comparison is not
+   enough to satisfy this: "pushed most recently" is not the same claim
+   as "has seen everything the other side has," and treating them as
+   equivalent is exactly the bug this rule exists to prevent (2026-08-03:
+   a stale device's push silently erased a newer entry from another
+   device, twice — once on pull via a "newer data?" prompt the user
+   correctly didn't trust, once on push with no prompt at all). Sync must
+   merge record-by-record before writing, in both directions, with no
+   exception for "just this once, it's probably fine."
+7. **Ask before restructuring.** Propose and wait. Do not refactor broadly in
    a session that was asked for a small fix.
-7. **Do not claim something works if you have not verified it.** "This
+8. **Do not claim something works if you have not verified it.** "This
    should work" and "I ran this and it worked" are different sentences. Use
    the honest one.
 
