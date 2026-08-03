@@ -5,7 +5,7 @@ const SCHEMA_VERSION = 1;
 
 // Paste your OAuth Client ID from Google Cloud Console here (see CLAUDE.md).
 // It's a public identifier, not a secret — safe to commit.
-const GOOGLE_CLIENT_ID = "";
+const GOOGLE_CLIENT_ID = "501903536592-43umsm4o1mm50egfhokbh3qg0d519i3n.apps.googleusercontent.com";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 const DRIVE_FILE_NAME = "money-ledger-data.json";
 
