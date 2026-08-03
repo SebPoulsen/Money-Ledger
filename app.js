@@ -19,36 +19,49 @@ const CURRENCY_LOCALE = {
 // so a category color picked here reads as part of the same family.
 const HUE_STOPS = ["#7A4A45", "#7A6A3A", "#4E7040", "#3A6E70", "#3A4F7A", "#5F3F72", "#7A4A45"];
 
+// Fixed ids, not uid()-generated: two separate devices both freshly seed
+// their own copy of this list on first launch, and if "Groceries" got a
+// random id on each device, merging would see two unrelated records and
+// duplicate every seed category on first connect instead of recognizing
+// them as the same one.
 const SEED_CATEGORIES = [
-  { name: "Groceries", direction: "expense", hue: 0.33 },
-  { name: "Rent", direction: "expense", hue: 0.67 },
-  { name: "Transport", direction: "expense", hue: 0.5 },
-  { name: "Subscriptions", direction: "expense", hue: 0.83 },
-  { name: "Dining", direction: "expense", hue: 0.17 },
-  { name: "Utilities", direction: "expense", hue: 0 },
-  { name: "Health", direction: "expense", hue: 0.58 },
-  { name: "Other", direction: "expense", hue: 0.42 },
-  { name: "Salary", direction: "income", hue: 0.33 },
-  { name: "Freelance", direction: "income", hue: 0.5 },
-  { name: "Gift", direction: "income", hue: 0.83 },
-  { name: "Other", direction: "income", hue: 0.42 },
+  { id: "seed-groceries", name: "Groceries", direction: "expense", hue: 0.33 },
+  { id: "seed-rent", name: "Rent", direction: "expense", hue: 0.67 },
+  { id: "seed-transport", name: "Transport", direction: "expense", hue: 0.5 },
+  { id: "seed-subscriptions", name: "Subscriptions", direction: "expense", hue: 0.83 },
+  { id: "seed-dining", name: "Dining", direction: "expense", hue: 0.17 },
+  { id: "seed-utilities", name: "Utilities", direction: "expense", hue: 0 },
+  { id: "seed-health", name: "Health", direction: "expense", hue: 0.58 },
+  { id: "seed-other-expense", name: "Other", direction: "expense", hue: 0.42 },
+  { id: "seed-salary", name: "Salary", direction: "income", hue: 0.33 },
+  { id: "seed-freelance", name: "Freelance", direction: "income", hue: 0.5 },
+  { id: "seed-gift", name: "Gift", direction: "income", hue: 0.83 },
+  { id: "seed-other-income", name: "Other", direction: "income", hue: 0.42 },
 ];
 
 // ---------- storage ----------
 
+function nowIso() {
+  return new Date().toISOString();
+}
+
 function defaultState() {
   return {
     version: SCHEMA_VERSION,
-    updatedAt: new Date().toISOString(),
+    updatedAt: nowIso(),
     settings: { currency: null, introSeen: false, driveConnected: false, driveFileId: null },
     categories: SEED_CATEGORIES.map((c) => ({
-      id: uid(), name: c.name, direction: c.direction, hue: c.hue, color: hueColor(c.hue),
+      id: c.id, name: c.name, direction: c.direction, hue: c.hue, color: hueColor(c.hue),
+      updatedAt: nowIso(), deleted: false, deletedAt: null,
     })),
     entries: [],
     subscriptions: [],
   };
 }
 
+// Every Entry/Category carries its own updatedAt + deleted/deletedAt tombstone
+// fields — sync merges record-by-record using these, never by comparing or
+// replacing the whole file (CLAUDE.md hard rule 6).
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) return defaultState();
@@ -60,6 +73,8 @@ function loadState() {
     // Treat data saved before Drive sync existed as "very old" rather than
     // "now", so it never wins a timestamp comparison against real Drive data.
     if (!parsed.updatedAt) parsed.updatedAt = new Date(0).toISOString();
+    (parsed.entries || []).forEach((e) => backfillRecordFields(e, parsed.updatedAt));
+    (parsed.categories || []).forEach((c) => backfillRecordFields(c, parsed.updatedAt));
     return parsed;
   } catch (e) {
     console.error("Money Ledger: corrupt local data, starting fresh", e);
@@ -67,12 +82,18 @@ function loadState() {
   }
 }
 
+function backfillRecordFields(record, fallbackUpdatedAt) {
+  if (!record.updatedAt) record.updatedAt = fallbackUpdatedAt;
+  if (record.deleted === undefined) record.deleted = false;
+  if (record.deletedAt === undefined) record.deletedAt = null;
+}
+
 function saveState() {
-  state.updatedAt = new Date().toISOString();
+  state.updatedAt = nowIso();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   if (state.settings.driveConnected && driveAccessToken) {
     clearTimeout(saveState._drivePush);
-    saveState._drivePush = setTimeout(pushToDrive, 1200);
+    saveState._drivePush = setTimeout(() => syncNow(false), 1200);
   }
 }
 
@@ -146,13 +167,14 @@ function weekRangeLabel(rows) {
 }
 
 function categoriesFor(direction) {
-  return state.categories.filter((c) => c.direction === direction);
+  return state.categories.filter((c) => c.direction === direction && !c.deleted);
 }
 function catById(id) {
-  return state.categories.find((c) => c.id === id);
+  return state.categories.find((c) => c.id === id && !c.deleted);
 }
 function entriesInMonth(y, m) {
   return state.entries.filter((e) => {
+    if (e.deleted) return false;
     const d = parseIso(e.date);
     return d.getFullYear() === y && d.getMonth() === m;
   });
@@ -243,6 +265,9 @@ function initQuickAdd() {
       categoryId: catSelect.value,
       note: document.getElementById("qaNote").value.trim(),
       recurringId: null,
+      updatedAt: nowIso(),
+      deleted: false,
+      deletedAt: null,
     };
     state.entries.push(entry);
     saveState();
@@ -297,6 +322,8 @@ function initEditSheet() {
     entry.categoryId = document.getElementById("editCategory").value;
     entry.date = document.getElementById("editDate").value;
     entry.note = document.getElementById("editNote").value.trim();
+    entry.updatedAt = nowIso();
+    entry.conflict = false; // reviewing/re-saving a flagged conflict counts as resolving it
     saveState();
     closeEditSheet();
     toast("Entry updated");
@@ -306,13 +333,17 @@ function initEditSheet() {
   document.getElementById("editDelete").addEventListener("click", () => {
     if (!editingId) return;
     if (!confirm("Delete this entry?")) return;
-    const idx = state.entries.findIndex((x) => x.id === editingId);
-    const removed = state.entries[idx];
-    state.entries.splice(idx, 1);
+    const entry = state.entries.find((x) => x.id === editingId);
+    if (!entry) return;
+    entry.deleted = true;
+    entry.deletedAt = nowIso();
+    entry.updatedAt = nowIso();
     saveState();
     closeEditSheet();
     toast("Entry deleted", () => {
-      state.entries.splice(idx, 0, removed);
+      entry.deleted = false;
+      entry.deletedAt = null;
+      entry.updatedAt = nowIso();
       saveState();
       renderAll();
     });
@@ -366,11 +397,11 @@ function renderRegister() {
       const dateStr = d.toLocaleDateString(undefined, { month: "2-digit", day: "2-digit" });
       const amtClass = e.direction === "income" ? "income" : "";
       const sign = e.direction === "income" ? "+" : "−";
-      html += `<button type="button" class="entryrow" data-id="${e.id}">
+      html += `<button type="button" class="entryrow${e.conflict ? " conflict" : ""}" data-id="${e.id}">
         <span class="date">${dateStr}</span>
         <span class="dot" style="background:${cat ? cat.color : "var(--none)"}"></span>
         <span class="meta">
-          <span class="cat">${cat ? escapeHtml(cat.name) : "Uncategorized"}</span>
+          <span class="cat">${cat ? escapeHtml(cat.name) : "Uncategorized"}${e.conflict ? ' <b class="conflict-flag" title="This entry synced with a conflicting edit from another device — check the other copy and delete the one you don\'t want.">⚠ sync conflict</b>' : ""}</span>
           ${e.note ? `<span class="note">${escapeHtml(e.note)}</span>` : ""}
         </span>
         <span class="amt ${amtClass}">${sign}${formatMoney(e.amountMinor, currency)}</span>
@@ -436,6 +467,7 @@ function renderCategoryRail() {
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:center;gap:8px">
           <input class="nm" value="${escapeHtml(c.name)}">
+          ${c.conflict ? '<b class="conflict-flag" title="This category synced with a conflicting edit from another device.">⚠</b>' : ""}
           <span style="font-family:var(--mono);font-size:12px;font-weight:600;white-space:nowrap">${formatMoney(total, currency)}</span>
         </div>
         <div class="tot-bar"><i style="width:${pct}%;background:${c.color}"></i></div>
@@ -452,20 +484,23 @@ function renderCategoryRail() {
     const nmInput = row.querySelector(".nm");
     nmInput.addEventListener("change", () => {
       c.name = nmInput.value.trim() || c.name;
+      c.updatedAt = nowIso();
       saveState();
       renderAll();
     });
 
     row.querySelector(".del").addEventListener("click", () => {
-      const inUse = state.entries.some((e) => e.categoryId === c.id);
+      const inUse = state.entries.some((e) => e.categoryId === c.id && !e.deleted);
       if (inUse && !confirm(`"${c.name}" has entries logged against it. Delete it anyway? Those entries will show as Uncategorized.`)) return;
-      const idx = state.categories.findIndex((x) => x.id === c.id);
-      const removed = state.categories[idx];
       if (openPickerCatId === c.id) openPickerCatId = null;
-      state.categories.splice(idx, 1);
+      c.deleted = true;
+      c.deletedAt = nowIso();
+      c.updatedAt = nowIso();
       saveState();
-      toast(`"${removed.name}" deleted`, () => {
-        state.categories.splice(idx, 0, removed);
+      toast(`"${c.name}" deleted`, () => {
+        c.deleted = false;
+        c.deletedAt = null;
+        c.updatedAt = nowIso();
         saveState();
         renderAll();
       });
@@ -491,6 +526,7 @@ function renderCategoryRail() {
         b.addEventListener("click", () => {
           c.hue = i / (HUE_STOPS.length - 1);
           c.color = hex;
+          c.updatedAt = nowIso();
           saveState();
           renderAll();
         });
@@ -503,6 +539,7 @@ function renderCategoryRail() {
         swBtn.style.background = c.color;
       });
       hueInput.addEventListener("change", () => {
+        c.updatedAt = nowIso();
         saveState();
         renderAll();
       });
@@ -532,7 +569,10 @@ function initCategoryRail() {
     const name = input.value.trim();
     if (!name) return;
     const hue = Math.random();
-    state.categories.push({ id: uid(), name, direction: railDir, hue, color: hueColor(hue) });
+    state.categories.push({
+      id: uid(), name, direction: railDir, hue, color: hueColor(hue),
+      updatedAt: nowIso(), deleted: false, deletedAt: null,
+    });
     saveState();
     input.value = "";
     renderAll();
@@ -593,6 +633,9 @@ function initSettings() {
         return;
       }
       if (!confirm("Import this backup? It will replace everything currently on this device.")) return;
+      if (!parsed.updatedAt) parsed.updatedAt = new Date(0).toISOString();
+      parsed.entries.forEach((e) => backfillRecordFields(e, parsed.updatedAt));
+      parsed.categories.forEach((c) => backfillRecordFields(c, parsed.updatedAt));
       state = parsed;
       if (!state.settings) state.settings = defaultState().settings;
       saveState();
@@ -610,12 +653,12 @@ function initSettings() {
       return;
     }
     if (!confirm(`Delete all ${monthEntries.length} ${monthEntries.length === 1 ? "entry" : "entries"} logged in ${label}?`)) return;
-    const removedIds = new Set(monthEntries.map((e) => e.id));
-    const removed = state.entries.filter((e) => removedIds.has(e.id));
-    state.entries = state.entries.filter((e) => !removedIds.has(e.id));
+    const ts = nowIso();
+    monthEntries.forEach((e) => { e.deleted = true; e.deletedAt = ts; e.updatedAt = ts; });
     saveState();
     toast(label + " cleared", () => {
-      state.entries = state.entries.concat(removed);
+      const undoTs = nowIso();
+      monthEntries.forEach((e) => { e.deleted = false; e.deletedAt = null; e.updatedAt = undoTs; });
       saveState();
       renderAll();
     });
@@ -645,8 +688,15 @@ function renderSettings() {
 // ---------- Google Drive sync (opt-in; see CLAUDE.md hard rule 4) ----------
 //
 // Uses drive.file scope: this app can only ever see files it created itself,
-// never the rest of a user's Drive. Sync is one JSON file, found-or-created
-// on first connect, pushed on every save, pulled on reconnect.
+// never the rest of a user's Drive. Every sync — push or pull, doesn't
+// matter which — merges record-by-record before writing anywhere. No
+// exceptions: CLAUDE.md hard rule 6 exists because a whole-file "newer"
+// comparison silently destroyed real data once already.
+
+// Two independent edits landing within this window are treated as "can't
+// honestly tell which happened first" — device clocks aren't perfectly
+// synced. Ambiguous cases never resolve to a deletion (see mergeRecords).
+const AMBIGUOUS_WINDOW_MS = 5000;
 
 function driveIsConfigured() {
   return !!GOOGLE_CLIENT_ID && typeof google !== "undefined" && google.accounts && google.accounts.oauth2;
@@ -665,14 +715,18 @@ function driveTokenClientFor(callback) {
   return driveTokenClient;
 }
 
-async function driveFindFile() {
+// Always searches by name — never blind-trusts a previously cached file id.
+// If more than one match turns up (e.g. two devices once created separate
+// files before either found the other's), that's surfaced rather than
+// silently picked, since it means two histories may need reconciling.
+async function driveFindFiles() {
   const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
   const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name)`, {
     headers: { Authorization: `Bearer ${driveAccessToken}` },
   });
   if (!res.ok) throw new Error("drive-list-" + res.status);
   const data = await res.json();
-  return (data.files && data.files[0]) || null;
+  return data.files || [];
 }
 
 async function driveCreateFile(contentStr) {
@@ -708,65 +762,132 @@ async function driveReadFile(fileId) {
   return res.json();
 }
 
-async function pushToDrive() {
-  if (!state.settings.driveConnected || !state.settings.driveFileId || !driveAccessToken) return;
-  try {
-    await driveUpdateFile(state.settings.driveFileId, JSON.stringify(state));
-  } catch (err) {
-    if (String(err.message).includes("401")) {
-      driveTokenClientFor((resp) => {
-        if (!resp.error) {
-          driveAccessToken = resp.access_token;
-          driveUpdateFile(state.settings.driveFileId, JSON.stringify(state)).catch((e) => console.error(e));
-        } else {
-          driveAccessToken = null;
-          renderSettings();
-        }
-      }).requestAccessToken({ prompt: "" });
-    } else {
-      console.error(err);
-    }
-  }
+// Compares two ISO timestamps. "ambiguous" (within AMBIGUOUS_WINDOW_MS) is a
+// distinct outcome from "a" or "b" — callers must not treat it as a coin
+// flip, only as "don't trust this difference enough to delete over it."
+function newerSide(aIso, bIso) {
+  const diff = new Date(aIso).getTime() - new Date(bIso).getTime();
+  if (Math.abs(diff) < AMBIGUOUS_WINDOW_MS) return "ambiguous";
+  return diff > 0 ? "a" : "b";
 }
 
-async function resolveDriveFile() {
-  const existing = state.settings.driveFileId ? { id: state.settings.driveFileId } : await driveFindFile();
+// Merges two versions of one collection (entries, or categories) id-by-id.
+// Returns the merged array plus counts for the summary toast. Rules, in
+// order:
+//   - present on only one side -> keep it (this alone satisfies "never
+//     remove a record the other side hasn't acknowledged": an id absent
+//     from one side is either brand new there, or was never told about a
+//     deletion — either way, absence is never treated as "delete it")
+//   - identical on both sides -> keep either, nothing to decide
+//   - one side is a tombstone, the other a live edit -> newer wins, EXCEPT
+//     if the timestamps are ambiguous, in which case the live (non-deleted)
+//     version always wins, deliberately biased against deleting on a guess
+//   - both sides are live edits with different content -> genuine conflict:
+//     keep both, flag both, let the user pick (never silently discard
+//     someone's edit because a clock says it was a few seconds earlier)
+function mergeRecords(localArr, remoteArr) {
+  const localById = new Map(localArr.map((r) => [r.id, r]));
+  const remoteById = new Map(remoteArr.map((r) => [r.id, r]));
+  const ids = new Set([...localById.keys(), ...remoteById.keys()]);
+  const merged = [];
+  let adoptedFromRemote = 0;
+  let conflicts = 0;
 
-  if (!existing) {
-    const fileId = await driveCreateFile(JSON.stringify(state));
-    state.settings.driveFileId = fileId;
-    state.settings.driveConnected = true;
-    saveState();
-    toast("Connected — this device's data is now on Drive.");
-    renderAll();
+  ids.forEach((id) => {
+    const local = localById.get(id);
+    const remote = remoteById.get(id);
+
+    if (local && !remote) { merged.push(local); return; }
+    if (remote && !local) { merged.push(remote); adoptedFromRemote++; return; }
+    if (JSON.stringify(local) === JSON.stringify(remote)) { merged.push(local); return; }
+
+    if (local.deleted !== remote.deleted) {
+      const side = newerSide(local.updatedAt, remote.updatedAt);
+      if (side === "ambiguous") {
+        merged.push(local.deleted ? remote : local); // never delete on a close call
+      } else {
+        merged.push(side === "a" ? local : remote);
+      }
+      return;
+    }
+
+    if (local.deleted && remote.deleted) {
+      // Both sides independently deleted the same record — redundant
+      // tombstones, not a conflict. Nothing for the user to choose between.
+      merged.push(local.updatedAt >= remote.updatedAt ? local : remote);
+      return;
+    }
+
+    // Both live but the content differs — a genuine same-record conflict.
+    // Keep both rather than pick a winner.
+    merged.push({ ...local, conflict: true });
+    merged.push({ ...remote, id: uid(), conflict: true, conflictOf: id, updatedAt: remote.updatedAt });
+    conflicts++;
+  });
+
+  return { merged, adoptedFromRemote, conflicts };
+}
+
+// Search-first: never blind-trusts a cached driveFileId. Warns (doesn't
+// silently pick one) if more than one file exists — see CLAUDE.md open
+// questions for what to do if that ever actually happens.
+async function resolveDriveFileId() {
+  const matches = await driveFindFiles();
+  if (matches.length > 1) {
+    console.warn("Money Ledger: multiple Drive files named", DRIVE_FILE_NAME, matches);
+  }
+  if (matches.length > 0) {
+    const preferred = matches.find((f) => f.id === state.settings.driveFileId) || matches[0];
+    state.settings.driveFileId = preferred.id;
+    return preferred.id;
+  }
+  const fileId = await driveCreateFile(JSON.stringify(state));
+  state.settings.driveFileId = fileId;
+  return fileId;
+}
+
+// The one sync entry point, used identically whether triggered by saving,
+// connecting, reconnecting, or the silent reload check — merge, save
+// locally (safe, can't lose anything), only then attempt the network push.
+// If the push fails, the merge is already safe on this device; it retries
+// on the next save or reload rather than being lost (see CLAUDE.md hard
+// rule 6 and the partial-write discussion in the commit history).
+async function syncNow(showToast) {
+  if (!state.settings.driveFileId || !driveAccessToken) return;
+
+  let remote;
+  try {
+    remote = await driveReadFile(state.settings.driveFileId);
+  } catch (err) {
+    console.error("Drive read failed, will retry later", err);
     return;
   }
 
-  state.settings.driveFileId = existing.id;
-  const remote = await driveReadFile(existing.id);
-  const localIsUntouched = state.entries.length === 0;
+  const entryMerge = mergeRecords(state.entries, remote.entries || []);
+  const catMerge = mergeRecords(state.categories, remote.categories || []);
+  state.entries = entryMerge.merged;
+  state.categories = catMerge.merged;
+  state.updatedAt = nowIso();
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); // safe local write, before any network risk
 
-  if (localIsUntouched && remote && (remote.entries || []).length > 0) {
-    state = remote;
-    state.settings.driveFileId = existing.id;
-    state.settings.driveConnected = true;
-    saveState();
-    toast("Loaded your data from Drive.");
-  } else if (remote && remote.updatedAt > state.updatedAt) {
-    const takeRemote = confirm(
-      "Drive has newer data than this device. Load it? Anything logged on this device since it last synced will be replaced."
-    );
-    if (takeRemote) {
-      state = remote;
-      state.settings.driveFileId = existing.id;
-    }
-    state.settings.driveConnected = true;
-    saveState();
-  } else {
-    state.settings.driveConnected = true;
-    saveState();
-  }
+  const adopted = entryMerge.adoptedFromRemote + catMerge.adoptedFromRemote;
+  const conflicts = entryMerge.conflicts + catMerge.conflicts;
   renderAll();
+
+  try {
+    await driveUpdateFile(state.settings.driveFileId, JSON.stringify(state));
+    if (showToast) {
+      if (conflicts > 0) {
+        toast(`Synced — ${adopted} record(s) from Drive, ${conflicts} conflict(s) flagged for you to review.`);
+      } else if (adopted > 0) {
+        toast(`Synced — ${adopted} record(s) added from Drive.`);
+      }
+      // clean merge, nothing adopted or conflicting: no toast, nothing to say
+    }
+  } catch (err) {
+    console.error("Drive push failed, will retry on next save", err);
+  }
+  renderSettings();
 }
 
 function connectDrive() {
@@ -777,7 +898,10 @@ function connectDrive() {
     }
     driveAccessToken = resp.access_token;
     try {
-      await resolveDriveFile();
+      await resolveDriveFileId();
+      state.settings.driveConnected = true;
+      saveState();
+      await syncNow(true);
     } catch (err) {
       console.error(err);
       toast("Couldn't reach Google Drive. Try again in a moment.");
@@ -786,14 +910,19 @@ function connectDrive() {
 }
 
 function reconnectDrive() {
-  driveTokenClientFor((resp) => {
+  driveTokenClientFor(async (resp) => {
     if (resp.error) {
       toast("Reconnect failed — try again.");
       return;
     }
     driveAccessToken = resp.access_token;
-    toast("Reconnected to Drive.");
-    renderAll();
+    try {
+      await resolveDriveFileId();
+      await syncNow(true);
+    } catch (err) {
+      console.error(err);
+      toast("Couldn't reach Google Drive. Try again in a moment.");
+    }
   }).requestAccessToken({ prompt: "" });
 }
 
@@ -821,12 +950,17 @@ function handleDriveButtonClick() {
 
 function initDriveSilentReconnect() {
   if (!driveIsConfigured() || !state.settings.driveConnected) return;
-  driveTokenClientFor((resp) => {
-    if (!resp.error) {
-      driveAccessToken = resp.access_token;
-      resolveDriveFile().catch((err) => console.error(err));
-    } else {
+  driveTokenClientFor(async (resp) => {
+    if (resp.error) {
       renderSettings();
+      return;
+    }
+    driveAccessToken = resp.access_token;
+    try {
+      await resolveDriveFileId();
+      await syncNow(false);
+    } catch (err) {
+      console.error(err);
     }
   }).requestAccessToken({ prompt: "" });
 }
