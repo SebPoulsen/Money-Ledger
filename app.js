@@ -3,6 +3,12 @@
 const STORAGE_KEY = "money-ledger-v1";
 const SCHEMA_VERSION = 1;
 
+// Paste your OAuth Client ID from Google Cloud Console here (see CLAUDE.md).
+// It's a public identifier, not a secret — safe to commit.
+const GOOGLE_CLIENT_ID = "";
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+const DRIVE_FILE_NAME = "money-ledger-data.json";
+
 const CURRENCIES = ["DKK", "USD", "EUR", "GBP", "SEK", "NOK", "CHF", "CAD", "AUD", "JPY"];
 const CURRENCY_LOCALE = {
   DKK: "da-DK", USD: "en-US", EUR: "en-IE", GBP: "en-GB", SEK: "sv-SE",
@@ -33,6 +39,7 @@ const SEED_CATEGORIES = [
 function defaultState() {
   return {
     version: SCHEMA_VERSION,
+    updatedAt: new Date().toISOString(),
     settings: { currency: null, introSeen: false, driveConnected: false, driveFileId: null },
     categories: SEED_CATEGORIES.map((c) => ({
       id: uid(), name: c.name, direction: c.direction, hue: c.hue, color: hueColor(c.hue),
@@ -50,6 +57,9 @@ function loadState() {
     // No prior schema versions exist yet — this is where a migration would
     // run before any new code reads old data (CLAUDE.md hard rule 1).
     if (!parsed.version) parsed.version = SCHEMA_VERSION;
+    // Treat data saved before Drive sync existed as "very old" rather than
+    // "now", so it never wins a timestamp comparison against real Drive data.
+    if (!parsed.updatedAt) parsed.updatedAt = new Date(0).toISOString();
     return parsed;
   } catch (e) {
     console.error("Money Ledger: corrupt local data, starting fresh", e);
@@ -58,10 +68,17 @@ function loadState() {
 }
 
 function saveState() {
+  state.updatedAt = new Date().toISOString();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  if (state.settings.driveConnected && driveAccessToken) {
+    clearTimeout(saveState._drivePush);
+    saveState._drivePush = setTimeout(pushToDrive, 1200);
+  }
 }
 
 let state = loadState();
+let driveAccessToken = null;
+let driveTokenClient = null;
 let viewMonth = new Date().getMonth();
 let viewYear = new Date().getFullYear();
 let editingId = null;
@@ -541,9 +558,7 @@ function initSettings() {
     renderAll();
   });
 
-  document.getElementById("driveConnectBtn").addEventListener("click", () => {
-    toast("Google Drive sync isn't wired up yet — needs a Google Cloud OAuth client first.");
-  });
+  document.getElementById("driveConnectBtn").addEventListener("click", handleDriveButtonClick);
 
   document.getElementById("clearDataBtn").addEventListener("click", () => {
     const label = monthLabel(viewYear, viewMonth);
@@ -569,13 +584,209 @@ function initSettings() {
 function renderSettings() {
   document.getElementById("currencySelect").value = state.settings.currency;
   const statusEl = document.getElementById("syncStatus");
-  if (state.settings.driveConnected) {
+  const btn = document.getElementById("driveConnectBtn");
+  if (state.settings.driveConnected && driveAccessToken) {
     statusEl.className = "status";
     statusEl.querySelector(".label").textContent = "Synced to Drive";
+    btn.textContent = "Disconnect Google Drive";
+  } else if (state.settings.driveConnected && !driveAccessToken) {
+    statusEl.className = "status stale";
+    statusEl.querySelector(".label").textContent = "Drive connected — needs reconnect";
+    btn.textContent = "Reconnect Google Drive";
   } else {
     statusEl.className = "status off";
     statusEl.querySelector(".label").textContent = "Local only, this device";
+    btn.textContent = "Connect Google Drive";
   }
+}
+
+// ---------- Google Drive sync (opt-in; see CLAUDE.md hard rule 4) ----------
+//
+// Uses drive.file scope: this app can only ever see files it created itself,
+// never the rest of a user's Drive. Sync is one JSON file, found-or-created
+// on first connect, pushed on every save, pulled on reconnect.
+
+function driveIsConfigured() {
+  return !!GOOGLE_CLIENT_ID && typeof google !== "undefined" && google.accounts && google.accounts.oauth2;
+}
+
+function driveTokenClientFor(callback) {
+  if (!driveTokenClient) {
+    driveTokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: DRIVE_SCOPE,
+      callback,
+    });
+  } else {
+    driveTokenClient.callback = callback;
+  }
+  return driveTokenClient;
+}
+
+async function driveFindFile() {
+  const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name)`, {
+    headers: { Authorization: `Bearer ${driveAccessToken}` },
+  });
+  if (!res.ok) throw new Error("drive-list-" + res.status);
+  const data = await res.json();
+  return (data.files && data.files[0]) || null;
+}
+
+async function driveCreateFile(contentStr) {
+  const boundary = "money_ledger_boundary";
+  const metadata = { name: DRIVE_FILE_NAME, mimeType: "application/json" };
+  const body =
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${contentStr}\r\n--${boundary}--`;
+  const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${driveAccessToken}`, "Content-Type": `multipart/related; boundary=${boundary}` },
+    body,
+  });
+  if (!res.ok) throw new Error("drive-create-" + res.status);
+  const data = await res.json();
+  return data.id;
+}
+
+async function driveUpdateFile(fileId, contentStr) {
+  const res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${driveAccessToken}`, "Content-Type": "application/json" },
+    body: contentStr,
+  });
+  if (!res.ok) throw new Error("drive-update-" + res.status);
+}
+
+async function driveReadFile(fileId) {
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+    headers: { Authorization: `Bearer ${driveAccessToken}` },
+  });
+  if (!res.ok) throw new Error("drive-read-" + res.status);
+  return res.json();
+}
+
+async function pushToDrive() {
+  if (!state.settings.driveConnected || !state.settings.driveFileId || !driveAccessToken) return;
+  try {
+    await driveUpdateFile(state.settings.driveFileId, JSON.stringify(state));
+  } catch (err) {
+    if (String(err.message).includes("401")) {
+      driveTokenClientFor((resp) => {
+        if (!resp.error) {
+          driveAccessToken = resp.access_token;
+          driveUpdateFile(state.settings.driveFileId, JSON.stringify(state)).catch((e) => console.error(e));
+        } else {
+          driveAccessToken = null;
+          renderSettings();
+        }
+      }).requestAccessToken({ prompt: "" });
+    } else {
+      console.error(err);
+    }
+  }
+}
+
+async function resolveDriveFile() {
+  const existing = state.settings.driveFileId ? { id: state.settings.driveFileId } : await driveFindFile();
+
+  if (!existing) {
+    const fileId = await driveCreateFile(JSON.stringify(state));
+    state.settings.driveFileId = fileId;
+    state.settings.driveConnected = true;
+    saveState();
+    toast("Connected — this device's data is now on Drive.");
+    renderAll();
+    return;
+  }
+
+  state.settings.driveFileId = existing.id;
+  const remote = await driveReadFile(existing.id);
+  const localIsUntouched = state.entries.length === 0;
+
+  if (localIsUntouched && remote && (remote.entries || []).length > 0) {
+    state = remote;
+    state.settings.driveFileId = existing.id;
+    state.settings.driveConnected = true;
+    saveState();
+    toast("Loaded your data from Drive.");
+  } else if (remote && remote.updatedAt > state.updatedAt) {
+    const takeRemote = confirm(
+      "Drive has newer data than this device. Load it? Anything logged on this device since it last synced will be replaced."
+    );
+    if (takeRemote) {
+      state = remote;
+      state.settings.driveFileId = existing.id;
+    }
+    state.settings.driveConnected = true;
+    saveState();
+  } else {
+    state.settings.driveConnected = true;
+    saveState();
+  }
+  renderAll();
+}
+
+function connectDrive() {
+  driveTokenClientFor(async (resp) => {
+    if (resp.error) {
+      toast("Google Drive connection was cancelled or failed.");
+      return;
+    }
+    driveAccessToken = resp.access_token;
+    try {
+      await resolveDriveFile();
+    } catch (err) {
+      console.error(err);
+      toast("Couldn't reach Google Drive. Try again in a moment.");
+    }
+  }).requestAccessToken({ prompt: "consent" });
+}
+
+function reconnectDrive() {
+  driveTokenClientFor((resp) => {
+    if (resp.error) {
+      toast("Reconnect failed — try again.");
+      return;
+    }
+    driveAccessToken = resp.access_token;
+    toast("Reconnected to Drive.");
+    renderAll();
+  }).requestAccessToken({ prompt: "" });
+}
+
+function disconnectDrive() {
+  driveAccessToken = null;
+  state.settings.driveConnected = false;
+  saveState();
+  toast("Disconnected. Nothing was deleted — your data stays on this device and on Drive.");
+  renderAll();
+}
+
+function handleDriveButtonClick() {
+  if (!driveIsConfigured()) {
+    toast("Google Drive sync isn't configured yet — needs a Google Cloud OAuth client ID.");
+    return;
+  }
+  if (state.settings.driveConnected && driveAccessToken) {
+    disconnectDrive();
+  } else if (state.settings.driveConnected && !driveAccessToken) {
+    reconnectDrive();
+  } else {
+    connectDrive();
+  }
+}
+
+function initDriveSilentReconnect() {
+  if (!driveIsConfigured() || !state.settings.driveConnected) return;
+  driveTokenClientFor((resp) => {
+    if (!resp.error) {
+      driveAccessToken = resp.access_token;
+      resolveDriveFile().catch((err) => console.error(err));
+    } else {
+      renderSettings();
+    }
+  }).requestAccessToken({ prompt: "" });
 }
 
 // ---------- fab ----------
@@ -609,4 +820,5 @@ document.addEventListener("DOMContentLoaded", () => {
   initSettings();
   initFab();
   if (state.settings.currency) renderAll();
+  initDriveSilentReconnect();
 });

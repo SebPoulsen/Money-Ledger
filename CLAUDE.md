@@ -120,7 +120,17 @@ Subscription {            // phase 3
 Settings {
   currency: string         // ISO 4217, e.g. "DKK", "USD" — chosen on first launch, changeable after
   driveConnected: boolean
-  driveFileId: string | null
+  driveFileId: string | null   // the Drive file this device is synced to, once connected
+}
+
+State (top-level, the whole localStorage/Drive-file blob) {
+  version: integer
+  updatedAt: string        // ISO 8601, bumped on every save — the only thing
+                            // Drive sync uses to decide which copy is newer
+  settings: Settings
+  categories: Category[]
+  entries: Entry[]
+  subscriptions: Subscription[]
 }
 ```
 
@@ -178,7 +188,16 @@ ledger-paper plainness *is* the trust signal.
    intro), week and month review views, and opt-in Google Drive sync via
    `drive.file`. Sync is in v1, not deferred, because it changes the
    storage layer's shape and is easier to design in from the start than to
-   retrofit.
+   retrofit. **Status:** code is written (`GOOGLE_CLIENT_ID` constant near
+   the top of `app.js`, currently empty — paste in the real OAuth Client ID
+   from Google Cloud Console). Sync logic itself hasn't been exercised
+   against a real Google account yet — an OAuth popup can't be driven by
+   Claude, so this needs a real click-through by Sebastian before it's
+   "done." One implementation detail worth re-checking under real load:
+   `driveTokenClientFor()` reuses a single token client and reassigns its
+   `.callback` per call rather than creating a fresh client each time — this
+   is a common pattern with Google Identity Services but isn't in their
+   official per-call API, so watch for stale-callback bugs during testing.
 2. **Budgets.** Per-category monthly budget amounts and the budget-vs-actual
    visual — this is what finally gives `--flag` red something real to
    trigger on. The category bar and the month's Net figure should read as a
