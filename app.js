@@ -560,6 +560,48 @@ function initSettings() {
 
   document.getElementById("driveConnectBtn").addEventListener("click", handleDriveButtonClick);
 
+  document.getElementById("exportBtn").addEventListener("click", () => {
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `money-ledger-backup-${todayStr()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast("Backup downloaded.");
+  });
+
+  const importFile = document.getElementById("importFile");
+  document.getElementById("importBtn").addEventListener("click", () => importFile.click());
+  importFile.addEventListener("change", () => {
+    const file = importFile.files[0];
+    importFile.value = "";
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      let parsed;
+      try {
+        parsed = JSON.parse(reader.result);
+      } catch (e) {
+        toast("That file isn't valid JSON — import cancelled.");
+        return;
+      }
+      if (!Array.isArray(parsed.entries) || !Array.isArray(parsed.categories)) {
+        toast("That doesn't look like a Money Ledger backup — import cancelled.");
+        return;
+      }
+      if (!confirm("Import this backup? It will replace everything currently on this device.")) return;
+      state = parsed;
+      if (!state.settings) state.settings = defaultState().settings;
+      saveState();
+      renderAll();
+      toast("Backup imported.");
+    };
+    reader.readAsText(file);
+  });
+
   document.getElementById("clearDataBtn").addEventListener("click", () => {
     const label = monthLabel(viewYear, viewMonth);
     const monthEntries = entriesInMonth(viewYear, viewMonth);

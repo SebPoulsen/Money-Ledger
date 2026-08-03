@@ -92,6 +92,12 @@
           <button type="button" id="driveConnectBtn" class="ghost">Connect Google Drive</button>
         </div>
         <div class="hint">Nothing leaves this device unless Drive is connected. Your data would sync directly to your own Drive — no server of ours ever sees it.</div>
+        <div class="tools" style="margin-top:10px">
+          <button type="button" id="exportBtn" class="ghost">Export backup (.json)</button>
+          <button type="button" id="importBtn" class="ghost">Import backup</button>
+          <input type="file" id="importFile" accept="application/json" hidden>
+        </div>
+        <div class="hint">A manual backup, independent of Drive sync. Import replaces everything currently on this device — you'll be asked to confirm first.</div>
         <div class="dangerzone">
           <button type="button" id="clearDataBtn" class="danger">Delete this month</button>
         </div>
