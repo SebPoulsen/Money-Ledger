@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Money Ledger — self-test</title>
+<style>
+  body{font-family:ui-monospace,"SF Mono",Menlo,monospace;background:#FAFAF7;color:#16211B;padding:24px;line-height:1.6}
+  h1{font-size:15px;text-transform:uppercase;letter-spacing:.08em}
+  .pass{color:#2F6B4F}
+  .fail{color:#B23A2F;font-weight:700}
+  .row{padding:2px 0}
+  #summary{margin-top:16px;padding-top:12px;border-top:1px solid #C2CDC1;font-weight:700}
+  iframe{display:none}
+</style>
+</head>
+<body>
+<h1>Money Ledger — self-test</h1>
+<p>Runs checks against the real app logic (not a copy of it) in
+<code>index.html?mltest=1</code>, isolated from your real saved ledger and your
+real Drive file — see the <code>TEST_MODE</code> switch at the top of app.js.
+This file is never linked from the real app; open it by hand before deploying.
+Serve the folder over a local server, e.g. <code>python3 -m http.server</code>,
+then open this file over <code>http://localhost:8000/…</code> — opening it as
+<code>file://</code> hits a cross-origin error on the iframe.</p>
+<div id="out">Loading index.html…</div>
+
+<iframe id="sandbox" src="index.html?mltest=1"></iframe>
+
+<script>
+(function(){
+"use strict";
+var out=document.getElementById("out");
+
+function report(results,error){
+  if(error){
+    out.innerHTML='<p class="fail">Could not run tests: '+error+'</p>'+
+      '<p>If this is a cross-origin error, you\'re probably opening this file '+
+      'directly as <code>file://</code>. Serve the folder over a local server instead.</p>';
+    return;
+  }
+  var failing=results.filter(function(r){ return !r.pass; }).length;
+  out.innerHTML=results.map(function(r){
+    return '<div class="row"><span class="'+(r.pass?"pass":"fail")+'">'+(r.pass?"PASS":"FAIL")+'</span>  '+r.name+'</div>';
+  }).join("")+'<div id="summary">'+failing+' failing / '+results.length+' total</div>';
+}
+
+document.getElementById("sandbox").addEventListener("load",function(){
+  var hook=this.contentWindow.__ML_TEST__;
+  if(!hook){ report(null,"index.html?mltest=1 didn't expose __ML_TEST__ — is TEST_MODE wired up?"); return; }
+  runTests(hook,this.contentDocument).then(function(results){ report(results); }).catch(function(e){ report(null,e); });
+});
+
+/* rec(overrides) builds one plausible Entry-shaped record for direct
+   mergeRecords() calls, so each test only has to spell out the fields it
+   actually cares about. */
+function rec(overrides){
+  return Object.assign({
+    id:"r1", date:"2026-08-01", amountMinor:1000, direction:"expense",
+    categoryId:"cat1", note:"", recurringId:null,
+    updatedAt:"2026-08-01T10:00:00.000Z", updatedBy:"device-A",
+    deleted:false, deletedAt:null,
+  },overrides);
+}
+
+/* Simulating two devices in one iframe: there's only one `state` in the
+   app, so "switching device" means snapshotting the current state under
+   its device id and restoring a previous snapshot (or starting fresh) when
+   switching to another one. Real functions still do all the actual work —
+   this just swaps which device's data they're currently operating on. */
+function makeDeviceSwitcher(H){
+  var snapshots={};
+  return function useDevice(id){
+    if(snapshots[id]) H.setState(JSON.parse(JSON.stringify(snapshots[id])));
+    else H.resetState();
+    H.setDeviceId(id);
+    return {
+      save:function(){ snapshots[id]=JSON.parse(JSON.stringify(H.getState())); },
+    };
+  };
+}
+
+async function runTests(H,d){
+  var results=[];
+  function assert(name,cond){ results.push({name:name,pass:!!cond}); }
+  var EF=H.ENTRY_CONTENT_FIELDS, CF=H.CATEGORY_CONTENT_FIELDS;
+
+  /* ============ mergeRecords: the algorithm, called directly ============
+     These call the real mergeRecords function with crafted record pairs —
+     same standing as Hours Ledger's direct calls to weekTotals/dayGaps:
+     the real function, not a reimplementation, exercised at the unit level
+     because these are exactly the cases where the algorithm's *decision*
+     matters, independent of how the app happens to sequence its calls. */
+
+  /* 1. record only on local / only on remote */
+  (function(){
+    var onlyLocal=H.mergeRecords([rec()],[],EF);
+    assert("a record present only locally is kept",
+      onlyLocal.merged.length===1 && onlyLocal.merged[0].id==="r1" && onlyLocal.adoptedFromRemote===0);
+    var onlyRemote=H.mergeRecords([],[rec()],EF);
+    assert("a record present only remotely is adopted",
+      onlyRemote.merged.length===1 && onlyRemote.adoptedFromRemote===1);
+  })();
+
+  /* 2. same record edited both sides, newest survives. `superseded`
+     specifically means "this call's local side lost" — so it must only
+     increment when local is the older edit, not whenever there's a
+     conflict at all. */
+  (function(){
+    var localOlder=rec({amountMinor:1000,updatedAt:"2026-08-01T10:00:00.000Z",updatedBy:"device-A"});
+    var remoteNewer=rec({amountMinor:2000,updatedAt:"2026-08-01T10:00:10.000Z",updatedBy:"device-B"});
+    var r=H.mergeRecords([localOlder],[remoteNewer],EF);
+    assert("the newer of two genuinely conflicting cross-device edits wins",
+      r.merged.length===1 && r.merged[0].amountMinor===2000);
+    assert("this call's local side losing is counted as superseded", r.superseded===1);
+
+    var localNewer=rec({amountMinor:3000,updatedAt:"2026-08-01T10:00:20.000Z",updatedBy:"device-A"});
+    var remoteOlder=rec({amountMinor:4000,updatedAt:"2026-08-01T10:00:00.000Z",updatedBy:"device-B"});
+    var r2=H.mergeRecords([localNewer],[remoteOlder],EF);
+    assert("when local's own edit wins, nothing is counted as superseded",
+      r2.merged[0].amountMinor===3000 && r2.superseded===0);
+  })();
+
+  /* 3. deleted one side, edited the other (decisive gap, real cross-device) */
+  (function(){
+    var deleted=rec({deleted:true,deletedAt:"2026-08-01T10:00:20.000Z",updatedAt:"2026-08-01T10:00:20.000Z",updatedBy:"device-A"});
+    var edited=rec({amountMinor:5000,updatedAt:"2026-08-01T10:00:00.000Z",updatedBy:"device-B"});
+    var r=H.mergeRecords([deleted],[edited],EF);
+    assert("a decisively later delete wins over an older edit",
+      r.merged.length===1 && r.merged[0].deleted===true);
+    var edited2=rec({amountMinor:5000,updatedAt:"2026-08-01T10:00:20.000Z",updatedBy:"device-B"});
+    var deleted2=rec({deleted:true,deletedAt:"2026-08-01T10:00:00.000Z",updatedAt:"2026-08-01T10:00:00.000Z",updatedBy:"device-A"});
+    var r2=H.mergeRecords([edited2],[deleted2],EF);
+    assert("a decisively later edit resurrects an older delete",
+      r2.merged[0].deleted===false);
+  })();
+
+  /* 4. deleted one side, untouched the other */
+  (function(){
+    var original=rec({updatedAt:"2026-08-01T09:00:00.000Z",updatedBy:"device-A"});
+    var deleted=Object.assign({},original,{deleted:true,deletedAt:"2026-08-01T10:00:00.000Z",updatedAt:"2026-08-01T10:00:00.000Z",updatedBy:"device-A"});
+    var r=H.mergeRecords([deleted],[original],EF);
+    assert("deleting a record the other side never independently touched removes it",
+      r.merged.length===1 && r.merged[0].deleted===true);
+  })();
+
+  /* 5. identical timestamps */
+  (function(){
+    var ts="2026-08-01T10:00:00.000Z";
+    var local=rec({amountMinor:1000,updatedAt:ts,updatedBy:"device-A"});
+    var remote=rec({amountMinor:2000,updatedAt:ts,updatedBy:"device-B"});
+    var r=H.mergeRecords([local],[remote],EF);
+    assert("identical timestamps still resolve to exactly one deterministic winner",
+      r.merged.length===1 && (r.merged[0].amountMinor===1000||r.merged[0].amountMinor===2000));
+  })();
+
+  /* 6. clock skew, remote slightly ahead (beyond the ambiguity window) */
+  (function(){
+    var local=rec({amountMinor:1000,updatedAt:"2026-08-01T10:00:00.000Z",updatedBy:"device-A"});
+    var remote=rec({amountMinor:2000,updatedAt:"2026-08-01T10:00:11.000Z",updatedBy:"device-B"}); // 11s ahead
+    var r=H.mergeRecords([local],[remote],EF);
+    assert("remote clearly ahead in time (past the ambiguity window) wins outright",
+      r.merged[0].amountMinor===2000);
+  })();
+
+  /* 7. tie within the 5-second window keeps the live version, never the delete */
+  (function(){
+    var deleted=rec({deleted:true,deletedAt:"2026-08-01T10:00:03.000Z",updatedAt:"2026-08-01T10:00:03.000Z",updatedBy:"device-A"});
+    var live=rec({amountMinor:1000,updatedAt:"2026-08-01T10:00:00.000Z",updatedBy:"device-B"}); // 3s apart — inside AMBIGUOUS_WINDOW_MS
+    var r=H.mergeRecords([deleted],[live],EF);
+    assert("a delete within the ambiguous window never beats a live cross-device edit",
+      r.merged.length===1 && r.merged[0].deleted===false);
+  })();
+
+  /* 8. a delete on one device while the other has been closed for days */
+  (function(){
+    var staleAlive=rec({updatedAt:"2026-07-30T10:00:00.000Z",updatedBy:"device-A"}); // phone's 2-day-old view
+    var freshDelete=rec({deleted:true,deletedAt:"2026-08-01T10:00:00.000Z",updatedAt:"2026-08-01T10:00:00.000Z",updatedBy:"device-A"}); // laptop's delete
+    var r=H.mergeRecords([staleAlive],[freshDelete],EF); // phone syncing against Drive, which already holds the delete
+    assert("a delete from days ago reaches a device that's been closed since before it happened",
+      r.merged[0].deleted===true);
+  })();
+
+  /* 9. empty state on one side */
+  (function(){
+    var bothEmpty=H.mergeRecords([],[],EF);
+    assert("both sides empty merges to nothing, no error", bothEmpty.merged.length===0);
+    var oneEmpty=H.mergeRecords([rec({id:"a"}),rec({id:"b"})],[],EF);
+    assert("all-local vs. empty-remote keeps everything, adopts nothing",
+      oneEmpty.merged.length===2 && oneEmpty.adoptedFromRemote===0);
+  })();
+
+  /* 10. seed categories get fixed ids so fresh installs don't duplicate */
+  (function(){
+    H.resetState(); H.setDeviceId("device-A");
+    var seedsA=JSON.parse(JSON.stringify(H.getState().categories));
+    H.resetState(); H.setDeviceId("device-B");
+    var seedsB=JSON.parse(JSON.stringify(H.getState().categories));
+    var idsA=seedsA.map(function(c){return c.id;}).sort();
+    var idsB=seedsB.map(function(c){return c.id;}).sort();
+    assert("two freshly-seeded devices use identical category ids",
+      JSON.stringify(idsA)===JSON.stringify(idsB) && idsA.length===H.SEED_CATEGORIES.length);
+    var merged=H.mergeRecords(seedsA,seedsB,CF);
+    assert("merging two fresh devices' seed categories produces no duplicates",
+      merged.merged.length===H.SEED_CATEGORIES.length);
+  })();
+
+  /* ============ full sequences through the real sync path ============
+     mergeRecords alone couldn't have caught tonight's actual bugs — the
+     ambiguity-window bug only showed up in how the app called merge in
+     sequence on one device. These drive createEntry/editEntry/deleteEntry
+     and the real syncNow() against the in-memory fake Drive, simulating
+     two devices by snapshotting/restoring state between them. */
+
+  var useDevice=makeDeviceSwitcher(H);
+  H.resetFakeDrive();
+
+  /* 11. regression: silent push overwrite — device B syncing must never
+     silently erase device A's entry that B never saw (2026-08-03) */
+  await (async function(){
+    var a=useDevice("push-overwrite-A");
+    var cat=H.getState().categories[0].id;
+    H.createEntry({date:"2026-08-01",amountMinor:100,direction:"expense",categoryId:cat,note:"A1"});
+    var fileId=await H.resolveDriveFileId();
+    H.testConnectDrive(fileId);
+    await H.syncNow(false);
+    a.save();
+
+    var b=useDevice("push-overwrite-B");
+    var fid=await H.resolveDriveFileId();
+    H.testConnectDrive(fid);
+    await H.syncNow(false); // adopts A1
+    b.save();
+
+    useDevice("push-overwrite-A");
+    H.createEntry({date:"2026-08-01",amountMinor:200,direction:"expense",categoryId:cat,note:"A2"});
+    await H.syncNow(false); // Drive now has A1+A2
+    a.save();
+
+    useDevice("push-overwrite-B");
+    H.createEntry({date:"2026-08-01",amountMinor:300,direction:"expense",categoryId:cat,note:"B1"});
+    await H.syncNow(false); // the critical moment: B pushes without ever having seen A2
+
+    var driveContent=JSON.parse(H.getFakeDrive()[fileId].content);
+    var live=driveContent.entries.filter(function(e){return !e.deleted;});
+    assert("device B syncing never silently erases device A's entry B hasn't seen",
+      live.length===3 && live.some(function(e){return e.note==="A2";}));
+  })();
+
+  /* 12. regression: pull overwrite — syncing must merge divergent Drive
+     content, never replace this device's own unpushed work (2026-08-03) */
+  await (async function(){
+    useDevice("pull-overwrite-A");
+    var cat=H.getState().categories[0].id;
+    var fileId=await H.resolveDriveFileId();
+    H.testConnectDrive(fileId);
+    H.createEntry({date:"2026-08-01",amountMinor:100,direction:"expense",categoryId:cat,note:"Existing"});
+    await H.syncNow(false);
+    H.createEntry({date:"2026-08-01",amountMinor:200,direction:"expense",categoryId:cat,note:"Unpushed"});
+    await H.syncNow(false); // pulling Drive's own echo of "Existing" must not cost "Unpushed"
+    var live=H.getState().entries.filter(function(e){return !e.deleted;});
+    assert("pulling from Drive never discards this device's own recent entry",
+      live.some(function(e){return e.note==="Existing";}) && live.some(function(e){return e.note==="Unpushed";}));
+  })();
+
+  /* 13. regression: undelete — a quick delete-then-sync on ONE device must
+     stick, not get reverted by the ambiguity window meant for cross-device
+     clock skew (2026-08-03/04) */
+  await (async function(){
+    useDevice("undelete-A");
+    var cat=H.getState().categories[0].id;
+    var fileId=await H.resolveDriveFileId();
+    H.testConnectDrive(fileId);
+    var e=H.createEntry({date:"2026-08-01",amountMinor:100,direction:"expense",categoryId:cat,note:"ToDelete"});
+    await H.syncNow(false); // pushed, alive on Drive
+    H.deleteEntry(e.id); // deleted moments later, same device, real clock — well inside 5s in practice
+    await H.syncNow(false);
+    var live=H.getState().entries.filter(function(x){return !x.deleted;});
+    assert("a quick delete-then-sync on the same device stays deleted",
+      !live.some(function(x){return x.id===e.id;}));
+  })();
+
+  /* 14. regression: edit creates a duplicate instead of updating in place
+     (2026-08-03/04) */
+  await (async function(){
+    useDevice("edit-dup-A");
+    var cat=H.getState().categories[0].id;
+    var fileId=await H.resolveDriveFileId();
+    H.testConnectDrive(fileId);
+    var e=H.createEntry({date:"2026-08-01",amountMinor:100,direction:"expense",categoryId:cat,note:"Edit me"});
+    await H.syncNow(false);
+    H.editEntry(e.id,{direction:"expense",amountMinor:222,categoryId:cat,date:"2026-08-01",note:"Edit me"});
+    await H.syncNow(false);
+    var live=H.getState().entries.filter(function(x){return !x.deleted;});
+    assert("editing then syncing updates the entry in place, never duplicates it",
+      live.length===1 && live[0].amountMinor===222);
+  })();
+
+  /* 15. regression: seed categories duplicating on fresh installs
+     (2026-08-03/04) */
+  await (async function(){
+    var a=useDevice("cat-dup-A");
+    var fileId=await H.resolveDriveFileId();
+    H.testConnectDrive(fileId);
+    await H.syncNow(false);
+    a.save();
+
+    useDevice("cat-dup-B");
+    var fid=await H.resolveDriveFileId();
+    H.testConnectDrive(fid);
+    await H.syncNow(false);
+    var live=H.getState().categories.filter(function(c){return !c.deleted;});
+    assert("two fresh devices connecting don't duplicate seed categories",
+      live.length===H.SEED_CATEGORIES.length);
+  })();
+
+  /* 16. the full manual repro, end to end: three entries across two
+     devices, an edit, a delete, a genuine cross-device conflict, and one
+     category each — everything should converge cleanly on both sides */
+  await (async function(){
+    var a=useDevice("repro-A");
+    var cat=H.getState().categories[0].id;
+    var fileId=await H.resolveDriveFileId();
+    H.testConnectDrive(fileId);
+    var r1=H.createEntry({date:"2026-08-01",amountMinor:100,direction:"expense",categoryId:cat,note:"Repro-1"});
+    await H.syncNow(false);
+    a.save();
+
+    var b=useDevice("repro-B");
+    var fid=await H.resolveDriveFileId();
+    H.testConnectDrive(fid);
+    await H.syncNow(false); // adopts Repro-1
+    var r3=H.createEntry({date:"2026-08-01",amountMinor:300,direction:"expense",categoryId:cat,note:"Repro-3"});
+    await H.syncNow(false);
+    b.save();
+
+    useDevice("repro-A");
+    H.createEntry({date:"2026-08-01",amountMinor:200,direction:"expense",categoryId:cat,note:"Repro-2"});
+    await H.syncNow(false); // Drive: Repro-1, 2, 3
+    a.save();
+
+    useDevice("repro-B");
+    await H.syncNow(false); // pulls Repro-2 down
+    var liveB=H.getState().entries.filter(function(e){return !e.deleted;});
+    assert("all three entries present on device B after the full repro sequence",
+      liveB.length===3);
+
+    var catsB=H.getState().categories.filter(function(c){return !c.deleted;});
+    assert("exactly one of each seed category, not duplicated across the repro",
+      catsB.length===H.SEED_CATEGORIES.length);
+  })();
+
+  return results;
+}
+})();
+</script>
+</body>
+</html>

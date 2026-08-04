@@ -1,6 +1,16 @@
 /* Money Ledger — vanilla JS, no framework, no build step (CLAUDE.md hard rule 2/3). */
 
-const STORAGE_KEY = "money-ledger-v1";
+// money-ledger-selftest.html loads this page with ?mltest=1 in a hidden
+// iframe. TEST_MODE isolates storage under a different key, replaces the
+// Drive network calls with an in-memory stub so a test run structurally
+// cannot reach a real Drive file, stubs confirm() so dialogs don't hang a
+// headless run, and exposes window.__ML_TEST__ — see "Testing" in CLAUDE.md.
+const TEST_MODE = new URLSearchParams(location.search).get("mltest") === "1";
+if (TEST_MODE) {
+  window.confirm = function () { return true; };
+}
+
+const STORAGE_KEY = "money-ledger-v1" + (TEST_MODE ? "-TESTMODE" : "");
 const SCHEMA_VERSION = 1;
 
 // Paste your OAuth Client ID from Google Cloud Console here (see CLAUDE.md).
@@ -107,7 +117,7 @@ function saveState() {
 // device's edit" (where clock skew is a genuine concern). See mergeRecords.
 // Declared before loadState() runs below — defaultState()'s seed
 // categories need it.
-const DEVICE_ID_KEY = "money-ledger-device-id";
+const DEVICE_ID_KEY = "money-ledger-device-id" + (TEST_MODE ? "-TESTMODE" : "");
 let DEVICE_ID = localStorage.getItem(DEVICE_ID_KEY);
 if (!DEVICE_ID) {
   DEVICE_ID = uid();
@@ -117,6 +127,13 @@ if (!DEVICE_ID) {
 let state = loadState();
 let driveAccessToken = null;
 let driveTokenClient = null;
+
+// In-memory stand-in for Drive, used only when TEST_MODE is on — see the
+// TEST_MODE branch at the top of each drive*File function below. Exposed
+// directly on the test hook so a test can plant "what's already on Drive"
+// before driving a device's real sync flow, or inspect what got pushed.
+let FAKE_DRIVE = {};
+let fakeDriveNextId = 1;
 let viewMonth = new Date().getMonth();
 let viewYear = new Date().getFullYear();
 let editingId = null;
@@ -821,6 +838,11 @@ function driveTokenClientFor(callback) {
 // files before either found the other's), that's surfaced rather than
 // silently picked, since it means two histories may need reconciling.
 async function driveFindFiles() {
+  if (TEST_MODE) {
+    return Object.keys(FAKE_DRIVE)
+      .filter((id) => FAKE_DRIVE[id].name === DRIVE_FILE_NAME)
+      .map((id) => ({ id, name: FAKE_DRIVE[id].name }));
+  }
   const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
   const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name)`, {
     headers: { Authorization: `Bearer ${driveAccessToken}` },
@@ -831,6 +853,11 @@ async function driveFindFiles() {
 }
 
 async function driveCreateFile(contentStr) {
+  if (TEST_MODE) {
+    const id = "fake-" + fakeDriveNextId++;
+    FAKE_DRIVE[id] = { name: DRIVE_FILE_NAME, content: contentStr };
+    return id;
+  }
   const boundary = "money_ledger_boundary";
   const metadata = { name: DRIVE_FILE_NAME, mimeType: "application/json" };
   const body =
@@ -847,6 +874,11 @@ async function driveCreateFile(contentStr) {
 }
 
 async function driveUpdateFile(fileId, contentStr) {
+  if (TEST_MODE) {
+    if (!FAKE_DRIVE[fileId]) throw new Error("fake-drive-404");
+    FAKE_DRIVE[fileId].content = contentStr;
+    return;
+  }
   const res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
     method: "PATCH",
     headers: { Authorization: `Bearer ${driveAccessToken}`, "Content-Type": "application/json" },
@@ -856,6 +888,10 @@ async function driveUpdateFile(fileId, contentStr) {
 }
 
 async function driveReadFile(fileId) {
+  if (TEST_MODE) {
+    if (!FAKE_DRIVE[fileId]) throw new Error("fake-drive-404");
+    return JSON.parse(FAKE_DRIVE[fileId].content);
+  }
   const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
     headers: { Authorization: `Bearer ${driveAccessToken}` },
   });
@@ -1082,6 +1118,7 @@ function handleDriveButtonClick() {
 }
 
 function initDriveSilentReconnect() {
+  if (TEST_MODE) return; // tests drive sync explicitly via the hook, never real OAuth
   if (!driveIsConfigured() || !state.settings.driveConnected) return;
   driveTokenClientFor(async (resp) => {
     if (resp.error) {
@@ -1120,6 +1157,50 @@ function renderAll() {
 
 // ---------- init ----------
 
+// Exposes the real functions above to money-ledger-selftest.html — not
+// copies of them, the same functions the UI calls. See CLAUDE.md "Testing."
+function exposeTestHook() {
+  window.__ML_TEST__ = {
+    getState: () => state,
+    setState: (s) => { state = s; renderAll(); },
+    resetState: () => {
+      state = defaultState();
+      localStorage.removeItem(STORAGE_KEY);
+      FAKE_DRIVE = {};
+      fakeDriveNextId = 1;
+      driveAccessToken = null;
+      renderAll();
+    },
+    saveState,
+    renderAll,
+
+    createEntry, editEntry, deleteEntry, undeleteEntry,
+    createCategory, editCategory, deleteCategory, undeleteCategory,
+
+    getDeviceId: () => DEVICE_ID,
+    setDeviceId: (id) => { DEVICE_ID = id; },
+
+    getFakeDrive: () => FAKE_DRIVE,
+    resetFakeDrive: () => { FAKE_DRIVE = {}; fakeDriveNextId = 1; },
+
+    syncNow, resolveDriveFileId, mergeRecords, sameContent, newerSide,
+    ENTRY_CONTENT_FIELDS, CATEGORY_CONTENT_FIELDS, AMBIGUOUS_WINDOW_MS, DRIVE_FILE_NAME,
+
+    // Sets driveAccessToken/driveFileId/driveConnected directly, as a
+    // successful real connect would leave them — without a live Google
+    // account, since TEST_MODE never performs the real OAuth flow.
+    testConnectDrive: (fileId) => {
+      driveAccessToken = "fake-token";
+      state.settings.driveFileId = fileId || null;
+      state.settings.driveConnected = true;
+    },
+
+    uid, nowIso, todayStr, isoDate, parseIso,
+    entriesInMonth, categoriesFor, catById,
+    SEED_CATEGORIES,
+  };
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   initIntro();
   initQuickAdd();
@@ -1130,4 +1211,5 @@ document.addEventListener("DOMContentLoaded", () => {
   initFab();
   if (state.settings.currency) renderAll();
   initDriveSilentReconnect();
+  if (TEST_MODE) exposeTestHook();
 });

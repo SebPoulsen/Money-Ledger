@@ -120,8 +120,60 @@ reopen it rather than quietly adding the toast back.
 
 ## Testing before you claim it works
 
-No automated test suite — matches Hours Ledger. Verify manually and say
-which of these you actually did, not which apply in theory:
+There is an automated self-test suite for the sync/merge logic —
+`money-ledger-selftest.html`, modeled directly on Hours Ledger's own
+`hours-ledger-selftest-reference.html`. It exists specifically because
+`mergeRecords` behaving correctly in isolation was never the whole story —
+2026-08-03/04's actual bugs were in how the app *called* merge in sequence
+on one device, which only a full sync-path test could catch.
+
+**How to run it:** serve the folder locally (`python3 -m http.server`,
+same as the app itself — opening as `file://` hits a cross-origin error on
+the iframe) and open `money-ledger-selftest.html` by hand. It's never
+linked from the real app. It loads `index.html?mltest=1` in a hidden
+iframe, drives the real functions via `window.__ML_TEST__` (not
+reimplementations of them), and renders PASS/FAIL rows with a
+failing/total summary.
+
+**Isolation — a test run cannot reach real data:**
+- `?mltest=1` sets `TEST_MODE`, which suffixes `STORAGE_KEY` and
+  `DEVICE_ID_KEY` with `-TESTMODE`, so a test run's `localStorage` never
+  overlaps the real ledger's key.
+- The four Drive network functions (`driveFindFiles`, `driveCreateFile`,
+  `driveUpdateFile`, `driveReadFile`) each branch on `TEST_MODE` *before*
+  constructing any `fetch()` call, and operate on an in-memory `FAKE_DRIVE`
+  object instead. This isn't "tests avoid calling the real network
+  function" — the real function itself cannot reach `googleapis.com` in
+  this mode, structurally, not by convention.
+- No real OAuth popup ever fires in TEST_MODE (`initDriveSilentReconnect`
+  no-ops); tests that need a connected state call `testConnectDrive()`,
+  which sets the same fields a real successful connect would leave behind.
+- `window.confirm` is stubbed to auto-accept in TEST_MODE only, so
+  delete/import/clear-month flows don't hang a headless run waiting for a
+  dialog no one will click.
+
+**What it covers:** the `mergeRecords` algorithm directly (only-local,
+only-remote, both-edited, delete-vs-edit, identical/skewed/ambiguous
+timestamps, empty sides, seed-category id collisions) and full sequences
+through the real `createEntry`/`editEntry`/`deleteEntry`/`syncNow` path,
+simulating two devices in one iframe by snapshotting and restoring state
+between them. Includes a regression test for each of 2026-08-03/04's five
+bugs (silent push overwrite, silent pull overwrite, undelete, edit
+duplication, category duplication) and one longer test walking the full
+manual repro end to end.
+
+**The standing rule, going forward, same as Hours Ledger: every bug gets a
+test that would have caught it, written before the fix, watched to fail
+against the old code first.** Verified this actually works before trusting
+it (2026-08-04): extracted `9eeabdb` and `11f58ff` — the commits before
+each fix — into scratch copies with a network-fetch shim standing in for
+Drive, ran the same scenarios against them directly, and confirmed each
+failed exactly as reported (Drive silently missing an entry; a deleted
+entry reappearing; an edit producing a second live record; seed categories
+exactly doubling) before confirming they pass on current code.
+
+Beyond the self-test suite, still verify manually and say which of these
+you actually did, not which apply in theory:
 
 - Log an expense and an income entry; confirm direction, sign, and colour
   are correct (plain ink for expense, green for income, red only when a
