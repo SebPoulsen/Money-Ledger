@@ -52,7 +52,7 @@ function defaultState() {
     settings: { currency: null, introSeen: false, driveConnected: false, driveFileId: null },
     categories: SEED_CATEGORIES.map((c) => ({
       id: c.id, name: c.name, direction: c.direction, hue: c.hue, color: hueColor(c.hue),
-      updatedAt: nowIso(), deleted: false, deletedAt: null,
+      updatedAt: nowIso(), updatedBy: DEVICE_ID, deleted: false, deletedAt: null,
     })),
     entries: [],
     subscriptions: [],
@@ -84,6 +84,9 @@ function loadState() {
 
 function backfillRecordFields(record, fallbackUpdatedAt) {
   if (!record.updatedAt) record.updatedAt = fallbackUpdatedAt;
+  // Unknown authorship — treated conservatively as "not this device" by
+  // mergeRecords, same as any other device's edit (ambiguity window applies).
+  if (record.updatedBy === undefined) record.updatedBy = null;
   if (record.deleted === undefined) record.deleted = false;
   if (record.deletedAt === undefined) record.deletedAt = null;
 }
@@ -95,6 +98,20 @@ function saveState() {
     clearTimeout(saveState._drivePush);
     saveState._drivePush = setTimeout(() => syncNow(false), 1200);
   }
+}
+
+// Identifies this browser profile, not this ledger — deliberately kept out
+// of `state` so it's never overwritten by a pull from Drive. Lets merge
+// tell "stale copy of my own last push" (no real ambiguity, my own clock
+// ordering of my own actions is never in question) apart from "another
+// device's edit" (where clock skew is a genuine concern). See mergeRecords.
+// Declared before loadState() runs below — defaultState()'s seed
+// categories need it.
+const DEVICE_ID_KEY = "money-ledger-device-id";
+let DEVICE_ID = localStorage.getItem(DEVICE_ID_KEY);
+if (!DEVICE_ID) {
+  DEVICE_ID = uid();
+  localStorage.setItem(DEVICE_ID_KEY, DEVICE_ID);
 }
 
 let state = loadState();
@@ -266,6 +283,7 @@ function initQuickAdd() {
       note: document.getElementById("qaNote").value.trim(),
       recurringId: null,
       updatedAt: nowIso(),
+      updatedBy: DEVICE_ID,
       deleted: false,
       deletedAt: null,
     };
@@ -323,6 +341,7 @@ function initEditSheet() {
     entry.date = document.getElementById("editDate").value;
     entry.note = document.getElementById("editNote").value.trim();
     entry.updatedAt = nowIso();
+    entry.updatedBy = DEVICE_ID;
     entry.conflict = false; // reviewing/re-saving a flagged conflict counts as resolving it
     saveState();
     closeEditSheet();
@@ -338,12 +357,14 @@ function initEditSheet() {
     entry.deleted = true;
     entry.deletedAt = nowIso();
     entry.updatedAt = nowIso();
+    entry.updatedBy = DEVICE_ID;
     saveState();
     closeEditSheet();
     toast("Entry deleted", () => {
       entry.deleted = false;
       entry.deletedAt = null;
       entry.updatedAt = nowIso();
+      entry.updatedBy = DEVICE_ID;
       saveState();
       renderAll();
     });
@@ -485,6 +506,7 @@ function renderCategoryRail() {
     nmInput.addEventListener("change", () => {
       c.name = nmInput.value.trim() || c.name;
       c.updatedAt = nowIso();
+      c.updatedBy = DEVICE_ID;
       saveState();
       renderAll();
     });
@@ -496,11 +518,13 @@ function renderCategoryRail() {
       c.deleted = true;
       c.deletedAt = nowIso();
       c.updatedAt = nowIso();
+      c.updatedBy = DEVICE_ID;
       saveState();
       toast(`"${c.name}" deleted`, () => {
         c.deleted = false;
         c.deletedAt = null;
         c.updatedAt = nowIso();
+        c.updatedBy = DEVICE_ID;
         saveState();
         renderAll();
       });
@@ -527,6 +551,7 @@ function renderCategoryRail() {
           c.hue = i / (HUE_STOPS.length - 1);
           c.color = hex;
           c.updatedAt = nowIso();
+          c.updatedBy = DEVICE_ID;
           saveState();
           renderAll();
         });
@@ -540,6 +565,7 @@ function renderCategoryRail() {
       });
       hueInput.addEventListener("change", () => {
         c.updatedAt = nowIso();
+        c.updatedBy = DEVICE_ID;
         saveState();
         renderAll();
       });
@@ -571,7 +597,7 @@ function initCategoryRail() {
     const hue = Math.random();
     state.categories.push({
       id: uid(), name, direction: railDir, hue, color: hueColor(hue),
-      updatedAt: nowIso(), deleted: false, deletedAt: null,
+      updatedAt: nowIso(), updatedBy: DEVICE_ID, deleted: false, deletedAt: null,
     });
     saveState();
     input.value = "";
@@ -654,11 +680,11 @@ function initSettings() {
     }
     if (!confirm(`Delete all ${monthEntries.length} ${monthEntries.length === 1 ? "entry" : "entries"} logged in ${label}?`)) return;
     const ts = nowIso();
-    monthEntries.forEach((e) => { e.deleted = true; e.deletedAt = ts; e.updatedAt = ts; });
+    monthEntries.forEach((e) => { e.deleted = true; e.deletedAt = ts; e.updatedAt = ts; e.updatedBy = DEVICE_ID; });
     saveState();
     toast(label + " cleared", () => {
       const undoTs = nowIso();
-      monthEntries.forEach((e) => { e.deleted = false; e.deletedAt = null; e.updatedAt = undoTs; });
+      monthEntries.forEach((e) => { e.deleted = false; e.deletedAt = null; e.updatedAt = undoTs; e.updatedBy = DEVICE_ID; });
       saveState();
       renderAll();
     });
@@ -765,10 +791,24 @@ async function driveReadFile(fileId) {
 // Compares two ISO timestamps. "ambiguous" (within AMBIGUOUS_WINDOW_MS) is a
 // distinct outcome from "a" or "b" — callers must not treat it as a coin
 // flip, only as "don't trust this difference enough to delete over it."
+// Only meaningful for comparing two DIFFERENT devices' clocks — see
+// mergeRecords for why a device's own history skips this entirely.
 function newerSide(aIso, bIso) {
   const diff = new Date(aIso).getTime() - new Date(bIso).getTime();
   if (Math.abs(diff) < AMBIGUOUS_WINDOW_MS) return "ambiguous";
   return diff > 0 ? "a" : "b";
+}
+
+// Fields that make two versions of a record actually different. Excludes
+// id (already matched — it's how the pair was found), updatedAt/updatedBy
+// (bookkeeping, not content — two devices seeding the same starter category
+// a second apart shouldn't count as a conflict), and conflict/conflictOf
+// (merge bookkeeping from a previous round).
+const ENTRY_CONTENT_FIELDS = ["date", "amountMinor", "direction", "categoryId", "note", "recurringId", "deleted", "deletedAt"];
+const CATEGORY_CONTENT_FIELDS = ["name", "direction", "hue", "color", "deleted", "deletedAt"];
+
+function sameContent(a, b, fields) {
+  return fields.every((f) => a[f] === b[f]);
 }
 
 // Merges two versions of one collection (entries, or categories) id-by-id.
@@ -778,14 +818,23 @@ function newerSide(aIso, bIso) {
 //     remove a record the other side hasn't acknowledged": an id absent
 //     from one side is either brand new there, or was never told about a
 //     deletion — either way, absence is never treated as "delete it")
-//   - identical on both sides -> keep either, nothing to decide
-//   - one side is a tombstone, the other a live edit -> newer wins, EXCEPT
-//     if the timestamps are ambiguous, in which case the live (non-deleted)
-//     version always wins, deliberately biased against deleting on a guess
-//   - both sides are live edits with different content -> genuine conflict:
-//     keep both, flag both, let the user pick (never silently discard
-//     someone's edit because a clock says it was a few seconds earlier)
-function mergeRecords(localArr, remoteArr) {
+//   - same content (ignoring bookkeeping fields) -> keep either, nothing
+//     to decide — this is what stops two devices' identical starter
+//     categories from being "different" just because they were seeded a
+//     moment apart
+//   - Drive's copy was last written by THIS device -> trust local outright,
+//     no ambiguity window at all. It's necessarily a stale snapshot of my
+//     own earlier push, and one device's own clock ordering of its own
+//     actions is never in question — only a genuine two-device comparison
+//     can be clock-skewed. This is what makes a quick delete (or edit)
+//     stick immediately instead of getting reverted by the next sync.
+//   - otherwise (a real cross-device difference): one side a tombstone,
+//     the other a live edit -> newer wins, EXCEPT if ambiguous, in which
+//     case the live version always wins, biased against deleting on a
+//     guess; both live with different content -> newer wins outright if
+//     clear-cut (an ordinary update, not a conflict), or if genuinely
+//     ambiguous, keep both, flagged, and let the user pick
+function mergeRecords(localArr, remoteArr, contentFields) {
   const localById = new Map(localArr.map((r) => [r.id, r]));
   const remoteById = new Map(remoteArr.map((r) => [r.id, r]));
   const ids = new Set([...localById.keys(), ...remoteById.keys()]);
@@ -799,12 +848,17 @@ function mergeRecords(localArr, remoteArr) {
 
     if (local && !remote) { merged.push(local); return; }
     if (remote && !local) { merged.push(remote); adoptedFromRemote++; return; }
-    if (JSON.stringify(local) === JSON.stringify(remote)) { merged.push(local); return; }
+    if (sameContent(local, remote, contentFields)) {
+      merged.push(local.updatedAt >= remote.updatedAt ? local : remote);
+      return;
+    }
+
+    const remoteIsMine = !!remote.updatedBy && remote.updatedBy === DEVICE_ID;
+    const side = remoteIsMine ? "a" : newerSide(local.updatedAt, remote.updatedAt);
 
     if (local.deleted !== remote.deleted) {
-      const side = newerSide(local.updatedAt, remote.updatedAt);
       if (side === "ambiguous") {
-        merged.push(local.deleted ? remote : local); // never delete on a close call
+        merged.push(local.deleted ? remote : local); // never delete on a genuinely cross-device close call
       } else {
         merged.push(side === "a" ? local : remote);
       }
@@ -818,10 +872,17 @@ function mergeRecords(localArr, remoteArr) {
       return;
     }
 
-    // Both live but the content differs — a genuine same-record conflict.
-    // Keep both rather than pick a winner.
+    if (side !== "ambiguous") {
+      // Clear-cut ordering (or Drive's copy is just my own stale echo) —
+      // an ordinary sequential update, not a conflict. Take the newer one.
+      merged.push(side === "a" ? local : remote);
+      return;
+    }
+
+    // Both live, content differs, and it's a genuine cross-device
+    // near-simultaneous edit — keep both rather than pick a winner.
     merged.push({ ...local, conflict: true });
-    merged.push({ ...remote, id: uid(), conflict: true, conflictOf: id, updatedAt: remote.updatedAt });
+    merged.push({ ...remote, id: uid(), conflict: true, conflictOf: id, updatedAt: remote.updatedAt, updatedBy: remote.updatedBy });
     conflicts++;
   });
 
@@ -863,8 +924,8 @@ async function syncNow(showToast) {
     return;
   }
 
-  const entryMerge = mergeRecords(state.entries, remote.entries || []);
-  const catMerge = mergeRecords(state.categories, remote.categories || []);
+  const entryMerge = mergeRecords(state.entries, remote.entries || [], ENTRY_CONTENT_FIELDS);
+  const catMerge = mergeRecords(state.categories, remote.categories || [], CATEGORY_CONTENT_FIELDS);
   state.entries = entryMerge.merged;
   state.categories = catMerge.merged;
   state.updatedAt = nowIso();

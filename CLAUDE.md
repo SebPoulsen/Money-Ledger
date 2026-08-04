@@ -111,6 +111,16 @@ Entry {
   categoryId: string
   note: string           // optional, "" if empty
   recurringId: string | null   // set only if auto-inserted from a subscription (phase 3)
+  updatedAt: string       // ISO 8601, bumped on every change to THIS record —
+                          // what sync merges by, never the whole-file updatedAt
+  updatedBy: string | null   // DEVICE_ID of whoever last touched this record;
+                              // null means "unknown" (pre-sync data), treated
+                              // conservatively as "not this device"
+  deleted: boolean        // tombstone, not physical removal — see hard rule 6
+  deletedAt: string | null
+  conflict: boolean | undefined     // set by a merge that couldn't tell whose
+                                     // edit should win — see mergeRecords in app.js
+  conflictOf: string | undefined    // the id this record conflicted with, if any
 }
 
 Category {
@@ -119,6 +129,12 @@ Category {
   color: string           // hex, chosen via the same hue-slider as Hours Ledger
   direction: "expense" | "income"   // separate lists per direction, not one shared pool
   budgetMinor: integer | null       // phase 2
+  updatedAt: string
+  updatedBy: string | null
+  deleted: boolean
+  deletedAt: string | null
+  conflict: boolean | undefined
+  conflictOf: string | undefined
 }
 
 Subscription {            // phase 3
@@ -137,14 +153,27 @@ Settings {
 
 State (top-level, the whole localStorage/Drive-file blob) {
   version: integer
-  updatedAt: string        // ISO 8601, bumped on every save — the only thing
-                            // Drive sync uses to decide which copy is newer
+  updatedAt: string        // ISO 8601, bumped on every save — bookkeeping
+                            // only; sync decisions are per-record now, never
+                            // by comparing this field (that was the bug)
   settings: Settings
   categories: Category[]
   entries: Entry[]
   subscriptions: Subscription[]
 }
 ```
+
+Seed categories use fixed ids (`"seed-groceries"` etc., see `SEED_CATEGORIES` in
+`app.js`), not generated ones — two freshly-installed devices need to agree
+that their starter "Groceries" is the same record, or merging duplicates
+every seed category on first connect.
+
+`DEVICE_ID` is a separate `localStorage` key (`money-ledger-device-id`),
+generated once per browser profile — deliberately **not** part of `State`,
+so it's never overwritten by a pull from Drive. It exists purely so merge
+can tell "a stale copy of my own last push" (no real ambiguity — one
+device's clock ordering of its own actions is never in question) apart
+from "another device's edit" (where clock skew is a genuine concern).
 
 - Amounts are always integer minor units. Format for display using
   `Settings.currency`'s locale rules; never do arithmetic on formatted
