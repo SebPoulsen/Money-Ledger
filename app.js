@@ -241,6 +241,114 @@ function initIntro() {
   }
 }
 
+// ---------- mutations ----------
+//
+// Single source of truth for creating/editing/deleting entries and
+// categories — event handlers below call these rather than mutating state
+// inline, so the test hook (money-ledger-selftest.html) can drive the same
+// functions the real UI drives, not a reimplementation of them.
+
+function createEntry(fields) {
+  const entry = {
+    id: uid(),
+    date: fields.date,
+    amountMinor: fields.amountMinor,
+    direction: fields.direction,
+    categoryId: fields.categoryId,
+    note: fields.note || "",
+    recurringId: null,
+    updatedAt: nowIso(),
+    updatedBy: DEVICE_ID,
+    deleted: false,
+    deletedAt: null,
+  };
+  state.entries.push(entry);
+  return entry;
+}
+
+function editEntry(id, fields) {
+  const entry = state.entries.find((x) => x.id === id);
+  if (!entry) return null;
+  entry.direction = fields.direction;
+  entry.amountMinor = fields.amountMinor;
+  entry.categoryId = fields.categoryId;
+  entry.date = fields.date;
+  entry.note = fields.note;
+  entry.updatedAt = nowIso();
+  entry.updatedBy = DEVICE_ID;
+  return entry;
+}
+
+function deleteEntry(id) {
+  const entry = state.entries.find((x) => x.id === id);
+  if (!entry) return null;
+  entry.deleted = true;
+  entry.deletedAt = nowIso();
+  entry.updatedAt = nowIso();
+  entry.updatedBy = DEVICE_ID;
+  return entry;
+}
+
+function undeleteEntry(id) {
+  const entry = state.entries.find((x) => x.id === id);
+  if (!entry) return null;
+  entry.deleted = false;
+  entry.deletedAt = null;
+  entry.updatedAt = nowIso();
+  entry.updatedBy = DEVICE_ID;
+  return entry;
+}
+
+function createCategory(fields) {
+  const category = {
+    id: uid(),
+    name: fields.name,
+    direction: fields.direction,
+    hue: fields.hue,
+    color: hueColor(fields.hue),
+    updatedAt: nowIso(),
+    updatedBy: DEVICE_ID,
+    deleted: false,
+    deletedAt: null,
+  };
+  state.categories.push(category);
+  return category;
+}
+
+// Partial update — only fields actually present in `fields` are touched,
+// matching how rename, recolor-via-preset, and recolor-via-slider each
+// only ever change one or two fields at a time.
+function editCategory(id, fields) {
+  const category = state.categories.find((x) => x.id === id);
+  if (!category) return null;
+  if (fields.name !== undefined) category.name = fields.name;
+  if (fields.hue !== undefined) category.hue = fields.hue;
+  if (fields.color !== undefined) category.color = fields.color;
+  category.updatedAt = nowIso();
+  category.updatedBy = DEVICE_ID;
+  return category;
+}
+
+function deleteCategory(id) {
+  const category = state.categories.find((x) => x.id === id);
+  if (!category) return null;
+  category.deleted = true;
+  category.deletedAt = nowIso();
+  category.updatedAt = nowIso();
+  category.updatedBy = DEVICE_ID;
+  return category;
+}
+
+function undeleteCategory(id) {
+  const category = state.categories.find((x) => x.id === id);
+  if (!category) return null;
+  category.deleted = false;
+  category.deletedAt = null;
+  category.updatedAt = nowIso();
+  category.updatedBy = DEVICE_ID;
+  return category;
+}
+
 // ---------- quick-add ----------
 
 let quickDir = "expense";
@@ -274,20 +382,13 @@ function initQuickAdd() {
     e.preventDefault();
     const amountVal = parseFloat(document.getElementById("qaAmount").value);
     if (!amountVal || amountVal <= 0) return;
-    const entry = {
-      id: uid(),
+    createEntry({
       date: dateInput.value || todayStr(),
       amountMinor: Math.round(amountVal * 100),
       direction: quickDir,
       categoryId: catSelect.value,
       note: document.getElementById("qaNote").value.trim(),
-      recurringId: null,
-      updatedAt: nowIso(),
-      updatedBy: DEVICE_ID,
-      deleted: false,
-      deletedAt: null,
-    };
-    state.entries.push(entry);
+    });
     saveState();
     document.getElementById("qaAmount").value = "";
     document.getElementById("qaNote").value = "";
@@ -330,18 +431,17 @@ function initEditSheet() {
 
   document.getElementById("editForm").addEventListener("submit", (e) => {
     e.preventDefault();
-    const entry = state.entries.find((x) => x.id === editingId);
-    if (!entry) return;
+    if (!state.entries.some((x) => x.id === editingId)) return;
     const dir = scrim.querySelector('.dirtoggle button[aria-pressed="true"]').dataset.dir;
     const amountVal = parseFloat(document.getElementById("editAmount").value);
     if (!amountVal || amountVal <= 0) return;
-    entry.direction = dir;
-    entry.amountMinor = Math.round(amountVal * 100);
-    entry.categoryId = document.getElementById("editCategory").value;
-    entry.date = document.getElementById("editDate").value;
-    entry.note = document.getElementById("editNote").value.trim();
-    entry.updatedAt = nowIso();
-    entry.updatedBy = DEVICE_ID;
+    editEntry(editingId, {
+      direction: dir,
+      amountMinor: Math.round(amountVal * 100),
+      categoryId: document.getElementById("editCategory").value,
+      date: document.getElementById("editDate").value,
+      note: document.getElementById("editNote").value.trim(),
+    });
     saveState();
     closeEditSheet();
     toast("Entry updated");
@@ -351,19 +451,12 @@ function initEditSheet() {
   document.getElementById("editDelete").addEventListener("click", () => {
     if (!editingId) return;
     if (!confirm("Delete this entry?")) return;
-    const entry = state.entries.find((x) => x.id === editingId);
+    const entry = deleteEntry(editingId);
     if (!entry) return;
-    entry.deleted = true;
-    entry.deletedAt = nowIso();
-    entry.updatedAt = nowIso();
-    entry.updatedBy = DEVICE_ID;
     saveState();
     closeEditSheet();
     toast("Entry deleted", () => {
-      entry.deleted = false;
-      entry.deletedAt = null;
-      entry.updatedAt = nowIso();
-      entry.updatedBy = DEVICE_ID;
+      undeleteEntry(entry.id);
       saveState();
       renderAll();
     });
@@ -502,9 +595,7 @@ function renderCategoryRail() {
 
     const nmInput = row.querySelector(".nm");
     nmInput.addEventListener("change", () => {
-      c.name = nmInput.value.trim() || c.name;
-      c.updatedAt = nowIso();
-      c.updatedBy = DEVICE_ID;
+      editCategory(c.id, { name: nmInput.value.trim() || c.name });
       saveState();
       renderAll();
     });
@@ -513,16 +604,10 @@ function renderCategoryRail() {
       const inUse = state.entries.some((e) => e.categoryId === c.id && !e.deleted);
       if (inUse && !confirm(`"${c.name}" has entries logged against it. Delete it anyway? Those entries will show as Uncategorized.`)) return;
       if (openPickerCatId === c.id) openPickerCatId = null;
-      c.deleted = true;
-      c.deletedAt = nowIso();
-      c.updatedAt = nowIso();
-      c.updatedBy = DEVICE_ID;
+      deleteCategory(c.id);
       saveState();
       toast(`"${c.name}" deleted`, () => {
-        c.deleted = false;
-        c.deletedAt = null;
-        c.updatedAt = nowIso();
-        c.updatedBy = DEVICE_ID;
+        undeleteCategory(c.id);
         saveState();
         renderAll();
       });
@@ -546,10 +631,7 @@ function renderCategoryRail() {
         b.type = "button";
         b.style.background = hex;
         b.addEventListener("click", () => {
-          c.hue = i / (HUE_STOPS.length - 1);
-          c.color = hex;
-          c.updatedAt = nowIso();
-          c.updatedBy = DEVICE_ID;
+          editCategory(c.id, { hue: i / (HUE_STOPS.length - 1), color: hex });
           saveState();
           renderAll();
         });
@@ -562,8 +644,7 @@ function renderCategoryRail() {
         swBtn.style.background = c.color;
       });
       hueInput.addEventListener("change", () => {
-        c.updatedAt = nowIso();
-        c.updatedBy = DEVICE_ID;
+        editCategory(c.id, {});
         saveState();
         renderAll();
       });
@@ -592,11 +673,7 @@ function initCategoryRail() {
     const input = document.getElementById("newCatName");
     const name = input.value.trim();
     if (!name) return;
-    const hue = Math.random();
-    state.categories.push({
-      id: uid(), name, direction: railDir, hue, color: hueColor(hue),
-      updatedAt: nowIso(), updatedBy: DEVICE_ID, deleted: false, deletedAt: null,
-    });
+    createCategory({ name, direction: railDir, hue: Math.random() });
     saveState();
     input.value = "";
     renderAll();
