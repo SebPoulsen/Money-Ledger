@@ -68,11 +68,43 @@ something that contradicts a rule below, stop and say which rule.
    correctly didn't trust, once on push with no prompt at all). Sync must
    merge record-by-record before writing, in both directions, with no
    exception for "just this once, it's probably fine."
+   This rule governs whether a *record* (an id) survives — it does not
+   require every conflicting *edit* to survive too. See "Same-record
+   conflicts: last-write-wins" below for the deliberate, narrower
+   exception: when a record survives on both sides but its content
+   genuinely disagrees, the losing edit's specific field values may be
+   discarded, as long as that's never silent.
 7. **Ask before restructuring.** Propose and wait. Do not refactor broadly in
    a session that was asked for a small fix.
 8. **Do not claim something works if you have not verified it.** "This
    should work" and "I ran this and it worked" are different sentences. Use
    the honest one.
+
+## Sync design decisions
+
+**Same-record conflicts: last-write-wins, not keep-both (2026-08-04).**
+When the same record has been edited differently on two devices, both
+still live (not a delete-vs-edit case — that's the separate
+never-delete-on-ambiguous bias, which stays), the later edit wins
+outright and the earlier one is discarded. This was originally built as
+keep-both-flagged-for-review; deliberately changed after live testing,
+for a reason worth preserving so it isn't re-litigated the next time
+someone eyes the "what if we lose an edit" question:
+
+Editing the same record on two devices while one hasn't synced yet is
+rare for a personal ledger, and when it happens both edits are usually
+real, deliberate decisions rather than noise — there's no principled way
+to guess which one the user actually meant to keep. Discarding the
+older one and moving on costs one edit, occasionally; a conflict-review
+UI for something that happens a couple of times a year isn't worth the
+complexity it would add everywhere else. The hard requirement is that
+this is never *silent* — if a device's own edit gets discarded by a
+sync, that device shows a toast saying so. Silent was the part that
+wasn't acceptable; picking a winner isn't.
+
+If this ever needs revisiting — e.g. multi-user ledgers, or edits
+frequent enough that losing one actually stings — reopen it as a new
+decision, don't just quietly add complexity back.
 
 ## Testing before you claim it works
 
@@ -118,9 +150,6 @@ Entry {
                               // conservatively as "not this device"
   deleted: boolean        // tombstone, not physical removal — see hard rule 6
   deletedAt: string | null
-  conflict: boolean | undefined     // set by a merge that couldn't tell whose
-                                     // edit should win — see mergeRecords in app.js
-  conflictOf: string | undefined    // the id this record conflicted with, if any
 }
 
 Category {
@@ -133,8 +162,6 @@ Category {
   updatedBy: string | null
   deleted: boolean
   deletedAt: string | null
-  conflict: boolean | undefined
-  conflictOf: string | undefined
 }
 
 Subscription {            // phase 3

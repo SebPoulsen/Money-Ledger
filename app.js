@@ -342,7 +342,6 @@ function initEditSheet() {
     entry.note = document.getElementById("editNote").value.trim();
     entry.updatedAt = nowIso();
     entry.updatedBy = DEVICE_ID;
-    entry.conflict = false; // reviewing/re-saving a flagged conflict counts as resolving it
     saveState();
     closeEditSheet();
     toast("Entry updated");
@@ -418,11 +417,11 @@ function renderRegister() {
       const dateStr = d.toLocaleDateString(undefined, { month: "2-digit", day: "2-digit" });
       const amtClass = e.direction === "income" ? "income" : "";
       const sign = e.direction === "income" ? "+" : "−";
-      html += `<button type="button" class="entryrow${e.conflict ? " conflict" : ""}" data-id="${e.id}">
+      html += `<button type="button" class="entryrow" data-id="${e.id}">
         <span class="date">${dateStr}</span>
         <span class="dot" style="background:${cat ? cat.color : "var(--none)"}"></span>
         <span class="meta">
-          <span class="cat">${cat ? escapeHtml(cat.name) : "Uncategorized"}${e.conflict ? ' <b class="conflict-flag" title="This entry synced with a conflicting edit from another device — check the other copy and delete the one you don\'t want.">⚠ sync conflict</b>' : ""}</span>
+          <span class="cat">${cat ? escapeHtml(cat.name) : "Uncategorized"}</span>
           ${e.note ? `<span class="note">${escapeHtml(e.note)}</span>` : ""}
         </span>
         <span class="amt ${amtClass}">${sign}${formatMoney(e.amountMinor, currency)}</span>
@@ -488,7 +487,6 @@ function renderCategoryRail() {
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:center;gap:8px">
           <input class="nm" value="${escapeHtml(c.name)}">
-          ${c.conflict ? '<b class="conflict-flag" title="This category synced with a conflicting edit from another device.">⚠</b>' : ""}
           <span style="font-family:var(--mono);font-size:12px;font-weight:600;white-space:nowrap">${formatMoney(total, currency)}</span>
         </div>
         <div class="tot-bar"><i style="width:${pct}%;background:${c.color}"></i></div>
@@ -800,10 +798,9 @@ function newerSide(aIso, bIso) {
 }
 
 // Fields that make two versions of a record actually different. Excludes
-// id (already matched — it's how the pair was found), updatedAt/updatedBy
+// id (already matched — it's how the pair was found) and updatedAt/updatedBy
 // (bookkeeping, not content — two devices seeding the same starter category
-// a second apart shouldn't count as a conflict), and conflict/conflictOf
-// (merge bookkeeping from a previous round).
+// a second apart shouldn't count as a difference worth resolving).
 const ENTRY_CONTENT_FIELDS = ["date", "amountMinor", "direction", "categoryId", "note", "recurringId", "deleted", "deletedAt"];
 const CATEGORY_CONTENT_FIELDS = ["name", "direction", "hue", "color", "deleted", "deletedAt"];
 
@@ -828,19 +825,21 @@ function sameContent(a, b, fields) {
 //     actions is never in question — only a genuine two-device comparison
 //     can be clock-skewed. This is what makes a quick delete (or edit)
 //     stick immediately instead of getting reverted by the next sync.
-//   - otherwise (a real cross-device difference): one side a tombstone,
-//     the other a live edit -> newer wins, EXCEPT if ambiguous, in which
-//     case the live version always wins, biased against deleting on a
-//     guess; both live with different content -> newer wins outright if
-//     clear-cut (an ordinary update, not a conflict), or if genuinely
-//     ambiguous, keep both, flagged, and let the user pick
+//   - one side a tombstone, the other a live edit -> newer wins, EXCEPT if
+//     ambiguous, in which case the live version always wins, deliberately
+//     biased against deleting on a guess (CLAUDE.md hard rule 6 / sync
+//     design decisions)
+//   - both live, content genuinely differs -> last-write-wins, no
+//     keep-both (CLAUDE.md "Same-record conflicts" decision, 2026-08-04).
+//     The discarded edit is reported back via `superseded` so the caller
+//     can tell the user — silent is what's disallowed, not the resolution.
 function mergeRecords(localArr, remoteArr, contentFields) {
   const localById = new Map(localArr.map((r) => [r.id, r]));
   const remoteById = new Map(remoteArr.map((r) => [r.id, r]));
   const ids = new Set([...localById.keys(), ...remoteById.keys()]);
   const merged = [];
   let adoptedFromRemote = 0;
-  let conflicts = 0;
+  let superseded = 0;
 
   ids.forEach((id) => {
     const local = localById.get(id);
@@ -872,21 +871,16 @@ function mergeRecords(localArr, remoteArr, contentFields) {
       return;
     }
 
-    if (side !== "ambiguous") {
-      // Clear-cut ordering (or Drive's copy is just my own stale echo) —
-      // an ordinary sequential update, not a conflict. Take the newer one.
-      merged.push(side === "a" ? local : remote);
-      return;
-    }
-
-    // Both live, content differs, and it's a genuine cross-device
-    // near-simultaneous edit — keep both rather than pick a winner.
-    merged.push({ ...local, conflict: true });
-    merged.push({ ...remote, id: uid(), conflict: true, conflictOf: id, updatedAt: remote.updatedAt, updatedBy: remote.updatedBy });
-    conflicts++;
+    // Both live, content genuinely differs. Last-write-wins on the raw
+    // timestamp — no ambiguity carve-out here, a definite pick is required
+    // either way, so ties are broken the same way regardless of how close
+    // they are.
+    const localWins = local.updatedAt >= remote.updatedAt;
+    merged.push(localWins ? local : remote);
+    if (!localWins) superseded++; // this device's own edit just lost — must be surfaced, not silent
   });
 
-  return { merged, adoptedFromRemote, conflicts };
+  return { merged, adoptedFromRemote, superseded };
 }
 
 // Search-first: never blind-trusts a cached driveFileId. Warns (doesn't
@@ -932,19 +926,20 @@ async function syncNow(showToast) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); // safe local write, before any network risk
 
   const adopted = entryMerge.adoptedFromRemote + catMerge.adoptedFromRemote;
-  const conflicts = entryMerge.conflicts + catMerge.conflicts;
+  const superseded = entryMerge.superseded + catMerge.superseded;
   renderAll();
 
   try {
     await driveUpdateFile(state.settings.driveFileId, JSON.stringify(state));
-    if (showToast) {
-      if (conflicts > 0) {
-        toast(`Synced — ${adopted} record(s) from Drive, ${conflicts} conflict(s) flagged for you to review.`);
-      } else if (adopted > 0) {
-        toast(`Synced — ${adopted} record(s) added from Drive.`);
-      }
-      // clean merge, nothing adopted or conflicting: no toast, nothing to say
+    // An edit made on this device getting overwritten by a newer one from
+    // elsewhere must never be silent (CLAUDE.md sync design decisions) —
+    // this toast fires regardless of showToast, unlike the routine summary.
+    if (superseded > 0) {
+      toast(`${superseded} edit(s) made on this device were replaced by a newer edit from another device.`);
+    } else if (showToast && adopted > 0) {
+      toast(`Synced — ${adopted} record(s) added from Drive.`);
     }
+    // clean merge, nothing adopted or superseded: no toast, nothing to say
   } catch (err) {
     console.error("Drive push failed, will retry on next save", err);
   }
