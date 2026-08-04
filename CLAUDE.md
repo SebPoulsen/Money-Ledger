@@ -79,6 +79,13 @@ something that contradicts a rule below, stop and say which rule.
 8. **Do not claim something works if you have not verified it.** "This
    should work" and "I ran this and it worked" are different sentences. Use
    the honest one.
+9. **The self-test suite must run and pass before any push touching sync,
+   merge, or storage.** From the repo root: `python3 -m http.server`, then
+   open `money-ledger-selftest.html` and confirm "0 failing" in the summary
+   line. Not optional verification — the gate itself. See "Testing before
+   you claim it works" for what TEST_MODE isolates and why the suite exists
+   (2026-08-03/04 — it exists specifically to catch the class of bug that
+   shipped that night).
 
 ## Sync design decisions
 
