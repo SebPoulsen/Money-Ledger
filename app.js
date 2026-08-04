@@ -831,8 +831,9 @@ function sameContent(a, b, fields) {
 //     design decisions)
 //   - both live, content genuinely differs -> last-write-wins, no
 //     keep-both (CLAUDE.md "Same-record conflicts" decision, 2026-08-04).
-//     The discarded edit is reported back via `superseded` so the caller
-//     can tell the user — silent is what's disallowed, not the resolution.
+//     `superseded` counts these for the console only — deliberately not
+//     surfaced to the user (CLAUDE.md "No user-facing notice on
+//     last-write-wins" decision, 2026-08-04).
 function mergeRecords(localArr, remoteArr, contentFields) {
   const localById = new Map(localArr.map((r) => [r.id, r]));
   const remoteById = new Map(remoteArr.map((r) => [r.id, r]));
@@ -931,15 +932,14 @@ async function syncNow(showToast) {
 
   try {
     await driveUpdateFile(state.settings.driveFileId, JSON.stringify(state));
-    // An edit made on this device getting overwritten by a newer one from
-    // elsewhere must never be silent (CLAUDE.md sync design decisions) —
-    // this toast fires regardless of showToast, unlike the routine summary.
-    if (superseded > 0) {
-      toast(`${superseded} edit(s) made on this device were replaced by a newer edit from another device.`);
-    } else if (showToast && adopted > 0) {
+    // Superseded edits are deliberately not surfaced to the user — see
+    // CLAUDE.md "No user-facing notice on last-write-wins" — but logged
+    // for anyone actually looking (devtools console, not the UI).
+    if (superseded > 0) console.log(`Sync: ${superseded} local edit(s) superseded by a newer edit from another device.`);
+    if (showToast && adopted > 0) {
       toast(`Synced — ${adopted} record(s) added from Drive.`);
     }
-    // clean merge, nothing adopted or superseded: no toast, nothing to say
+    // clean merge, nothing to say
   } catch (err) {
     console.error("Drive push failed, will retry on next save", err);
   }

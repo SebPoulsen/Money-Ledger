@@ -69,11 +69,11 @@ something that contradicts a rule below, stop and say which rule.
    merge record-by-record before writing, in both directions, with no
    exception for "just this once, it's probably fine."
    This rule governs whether a *record* (an id) survives — it does not
-   require every conflicting *edit* to survive too. See "Same-record
-   conflicts: last-write-wins" below for the deliberate, narrower
-   exception: when a record survives on both sides but its content
+   require every conflicting *edit* to survive too. See "Sync design
+   decisions" below: when a record survives on both sides but its content
    genuinely disagrees, the losing edit's specific field values may be
-   discarded, as long as that's never silent.
+   discarded outright. That's a deliberate, narrower exception to this
+   rule, not a violation of it.
 7. **Ask before restructuring.** Propose and wait. Do not refactor broadly in
    a session that was asked for a small fix.
 8. **Do not claim something works if you have not verified it.** "This
@@ -97,14 +97,26 @@ real, deliberate decisions rather than noise — there's no principled way
 to guess which one the user actually meant to keep. Discarding the
 older one and moving on costs one edit, occasionally; a conflict-review
 UI for something that happens a couple of times a year isn't worth the
-complexity it would add everywhere else. The hard requirement is that
-this is never *silent* — if a device's own edit gets discarded by a
-sync, that device shows a toast saying so. Silent was the part that
-wasn't acceptable; picking a winner isn't.
+complexity it would add everywhere else.
 
 If this ever needs revisiting — e.g. multi-user ledgers, or edits
 frequent enough that losing one actually stings — reopen it as a new
 decision, don't just quietly add complexity back.
+
+**No user-facing notice when last-write-wins discards an edit
+(2026-08-04).** The first version of the decision above required a
+toast whenever a device's own edit got superseded, on the theory that
+"silent" was the unacceptable part, not the resolution. Reconsidered
+after actually testing it: this is a personal tool where the point is
+to think as little as possible while using it, and a notification that
+fires maybe once a year is noise Sebastian will have forgotten the
+meaning of by the time it appears. The resolution is correct either
+way — there's no decision here he'd need to be told about, because
+last-write-wins is what he'd have chosen himself. `mergeRecords` still
+counts superseded edits and `syncNow` logs the count to the console,
+but nothing reaches the UI. If this changes — e.g. sync becomes
+frequent enough that losing edits silently actually causes confusion —
+reopen it rather than quietly adding the toast back.
 
 ## Testing before you claim it works
 
