@@ -481,7 +481,9 @@ function initEditSheet() {
 
   document.getElementById("editDelete").addEventListener("click", () => {
     if (!editingId) return;
-    if (!confirm("Delete this entry?")) return;
+    // No confirm dialog here on purpose — the undo toast right after this
+    // is the safety net for a single entry. Deleting a whole month (below)
+    // is a different order of consequence and still asks first.
     const entry = deleteEntry(editingId);
     if (!entry) return;
     saveState();
