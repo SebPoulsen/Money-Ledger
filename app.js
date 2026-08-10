@@ -1073,7 +1073,7 @@ function connectDrive() {
       await syncNow(true);
     } catch (err) {
       console.error(err);
-      toast("Couldn't reach Google Drive. Try again in a moment.");
+      toast("Couldn't reach Google Drive (" + (err && err.message ? err.message : err) + "). Try again in a moment.");
     }
   }).requestAccessToken({ prompt: "consent" });
 }
@@ -1090,7 +1090,7 @@ function reconnectDrive() {
       await syncNow(true);
     } catch (err) {
       console.error(err);
-      toast("Couldn't reach Google Drive. Try again in a moment.");
+      toast("Couldn't reach Google Drive (" + (err && err.message ? err.message : err) + "). Try again in a moment.");
     }
   }).requestAccessToken({ prompt: "" });
 }
