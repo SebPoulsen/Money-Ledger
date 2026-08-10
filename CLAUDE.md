@@ -329,14 +329,17 @@ ledger-paper plainness *is* the trust signal.
    storage layer's shape and is easier to design in from the start than to
    retrofit. **Status:** code is written (`GOOGLE_CLIENT_ID` constant near
    the top of `app.js`, currently empty — paste in the real OAuth Client ID
-   from Google Cloud Console). Sync logic itself hasn't been exercised
-   against a real Google account yet — an OAuth popup can't be driven by
-   Claude, so this needs a real click-through by Sebastian before it's
-   "done." One implementation detail worth re-checking under real load:
-   `driveTokenClientFor()` reuses a single token client and reassigns its
-   `.callback` per call rather than creating a fresh client each time — this
-   is a common pattern with Google Identity Services but isn't in their
-   official per-call API, so watch for stale-callback bugs during testing.
+   from Google Cloud Console). Sync has now been exercised extensively
+   against a real Google account across multiple real devices/browser
+   profiles (2026-08-03/04) — connect, reconnect, disconnect, concurrent
+   edits, deletes, and conflicts all verified live, not just via the
+   self-test suite. `driveTokenClientFor()`'s reused-token-client pattern
+   held up fine under that real load, no stale-callback issues observed.
+   **Known gap: mobile Safari OAuth popup is broken** (ITP breaks the
+   popup handoff — see CLAUDE.md session notes / git log for the
+   diagnosis and the redirect-mode fix that was proposed but not yet
+   built). Real workflow is phone-to-log, laptop-to-review, so this
+   blocks calling v1 fully done until it's fixed.
 2. **Budgets.** Per-category monthly budget amounts and the budget-vs-actual
    visual — this is what finally gives `--flag` red something real to
    trigger on. The category bar and the month's Net figure should read as a

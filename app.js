@@ -214,24 +214,38 @@ function entriesInMonth(y, m) {
   });
 }
 
+// Undoable toasts (deletes) run in two phases, same pattern as Hours
+// Ledger: the full message + Undo button for UNDO_FULL_MS, then just the
+// Undo button alone (message hidden, toast shrinks to fit) for an extra
+// UNDO_COMPACT_MS, so the undo window outlasts the message without
+// permanently claiming screen space. Plain informational toasts (no
+// undoFn) stay single-phase.
+const UNDO_FULL_MS = 4500;
+const UNDO_COMPACT_MS = 6500;
+
 function toast(msg, undoFn) {
   const el = document.getElementById("toast");
   el.querySelector(".msg").textContent = msg;
+  el.classList.remove("compact");
   const btn = document.getElementById("toastUndo");
+  clearTimeout(toast._compactTimer);
+  clearTimeout(toast._dismissTimer);
   if (undoFn) {
     btn.hidden = false;
     btn.onclick = () => {
       undoFn();
-      el.classList.remove("on");
-      clearTimeout(toast._t);
+      el.classList.remove("on", "compact");
+      clearTimeout(toast._compactTimer);
+      clearTimeout(toast._dismissTimer);
     };
+    toast._compactTimer = setTimeout(() => el.classList.add("compact"), UNDO_FULL_MS);
+    toast._dismissTimer = setTimeout(() => el.classList.remove("on", "compact"), UNDO_FULL_MS + UNDO_COMPACT_MS);
   } else {
     btn.hidden = true;
     btn.onclick = null;
+    toast._dismissTimer = setTimeout(() => el.classList.remove("on"), 5000);
   }
   el.classList.add("on");
-  clearTimeout(toast._t);
-  toast._t = setTimeout(() => el.classList.remove("on"), 5000);
 }
 
 // ---------- intro ----------
@@ -521,21 +535,31 @@ function renderRegister() {
     rows.forEach((e) => (e.direction === "income" ? (inc += e.amountMinor) : (exp += e.amountMinor)));
     const label = weekRangeLabel(rows);
     html += `<div class="weekhead"><b>${label}</b><span>IN ${formatMoney(inc, currency)} · OUT ${formatMoney(exp, currency)}</span></div>`;
+
+    const days = new Map(); // date -> entries[], for the daily sub-grouping inside each week
     rows.forEach((e) => {
-      const cat = catById(e.categoryId);
-      const d = parseIso(e.date);
-      const dateStr = d.toLocaleDateString(undefined, { month: "2-digit", day: "2-digit" });
-      const amtClass = e.direction === "income" ? "income" : "";
-      const sign = e.direction === "income" ? "+" : "−";
-      html += `<button type="button" class="entryrow" data-id="${e.id}">
-        <span class="date">${dateStr}</span>
-        <span class="dot" style="background:${cat ? cat.color : "var(--none)"}"></span>
-        <span class="meta">
-          <span class="cat">${cat ? escapeHtml(cat.name) : "Uncategorized"}</span>
-          ${e.note ? `<span class="note">${escapeHtml(e.note)}</span>` : ""}
-        </span>
-        <span class="amt ${amtClass}">${sign}${formatMoney(e.amountMinor, currency)}</span>
-      </button>`;
+      if (!days.has(e.date)) days.set(e.date, []);
+      days.get(e.date).push(e);
+    });
+    Array.from(days.keys()).sort().reverse().forEach((dateKey) => {
+      const dayRows = days.get(dateKey);
+      let dInc = 0, dExp = 0;
+      dayRows.forEach((e) => (e.direction === "income" ? (dInc += e.amountMinor) : (dExp += e.amountMinor)));
+      const dayLabel = parseIso(dateKey).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }).toUpperCase();
+      html += `<div class="dayhead"><b>${dayLabel}</b><span>IN ${formatMoney(dInc, currency)} · OUT ${formatMoney(dExp, currency)}</span></div>`;
+      dayRows.forEach((e) => {
+        const cat = catById(e.categoryId);
+        const amtClass = e.direction === "income" ? "income" : "";
+        const sign = e.direction === "income" ? "+" : "−";
+        html += `<button type="button" class="entryrow" data-id="${e.id}">
+          <span class="dot" style="background:${cat ? cat.color : "var(--none)"}"></span>
+          <span class="meta">
+            <span class="cat">${cat ? escapeHtml(cat.name) : "Uncategorized"}</span>
+            ${e.note ? `<span class="note">${escapeHtml(e.note)}</span>` : ""}
+          </span>
+          <span class="amt ${amtClass}">${sign}${formatMoney(e.amountMinor, currency)}</span>
+        </button>`;
+      });
     });
   });
   box.innerHTML = html;

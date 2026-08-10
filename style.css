@@ -86,9 +86,10 @@ button{cursor:pointer}
 .register{border:1px solid var(--ink)}
 .weekhead{display:flex;justify-content:space-between;align-items:baseline;background:var(--stripe);padding:8px 12px;border-bottom:1px solid var(--ink);font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .weekhead b{font-family:var(--mono);font-size:12px;color:var(--ink);letter-spacing:0;text-transform:none}
-.entryrow{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--rule-soft);text-align:left;background:transparent;border-left:0;border-right:0;border-top:0;width:100%;font-size:13px}
+.dayhead{display:flex;justify-content:space-between;align-items:baseline;padding:6px 12px 5px;border-bottom:1px solid var(--rule-soft);font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.dayhead b{font-family:var(--mono);font-size:10.5px;color:var(--ink);letter-spacing:.02em}
+.entryrow{display:flex;align-items:center;gap:10px;padding:9px 12px 9px 22px;border-bottom:1px solid var(--rule-soft);text-align:left;background:transparent;border-left:0;border-right:0;border-top:0;width:100%;font-size:13px}
 .entryrow:hover{background:var(--stripe)}
-.entryrow .date{font-family:var(--mono);font-size:11px;color:var(--muted);width:52px;flex:none}
 .entryrow .dot{margin-right:0}
 .entryrow .meta{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
 .entryrow .cat{font-size:13px;font-weight:500}
@@ -142,6 +143,9 @@ button{cursor:pointer}
   display:flex;align-items:center;gap:14px;font-family:var(--mono);font-size:12px;
   transition:transform .22s ease;max-width:calc(100vw - 32px)}
 .toast.on{transform:translateX(-50%) translateY(0)}
+/* second phase of an undoable toast: message gone, just the Undo button
+   left, so it doesn't keep claiming attention but stays reachable */
+.toast.compact .msg{display:none}
 .toast button{border:1px solid var(--paper);background:transparent;color:var(--paper);
   padding:5px 11px;font-family:var(--mono);font-size:11px;letter-spacing:.11em;text-transform:uppercase}
 .toast button:hover{background:var(--paper);color:var(--ink)}
