@@ -128,6 +128,43 @@ let state = loadState();
 let driveAccessToken = null;
 let driveTokenClient = null;
 
+// Caches the access token across page reloads, with its own expiry, so a
+// reload within the same ~hour doesn't force a fresh Google sign-in.
+// Google only issues refresh tokens (the usual "stay logged in" mechanism)
+// through the server-side OAuth flow, which needs a backend to hold a
+// client secret — building that would route Drive access through
+// infrastructure I control, which is exactly what hard rule 4 forbids. This
+// is the best a pure static site can do: a real bearer token sitting in
+// localStorage, scoped to drive.file and expiring on its own in ~1hr — a
+// real credential, not nothing, kept isolated from `state`/synced data for
+// the same reason DEVICE_ID is.
+const DRIVE_TOKEN_CACHE_KEY = "money-ledger-drive-token" + (TEST_MODE ? "-TESTMODE" : "");
+// Treat a token as unusable a little before its real expiry, so we don't
+// hand a nearly-dead token to a sync call that's about to start.
+const DRIVE_TOKEN_SAFETY_MARGIN_MS = 60000;
+
+function saveDriveTokenCache(token, expiresInSeconds) {
+  const expiresAt = Date.now() + expiresInSeconds * 1000;
+  localStorage.setItem(DRIVE_TOKEN_CACHE_KEY, JSON.stringify({ token, expiresAt }));
+}
+
+function loadDriveTokenCache() {
+  const raw = localStorage.getItem(DRIVE_TOKEN_CACHE_KEY);
+  if (!raw) return null;
+  try {
+    const cached = JSON.parse(raw);
+    if (!cached.token || !cached.expiresAt) return null;
+    if (Date.now() > cached.expiresAt - DRIVE_TOKEN_SAFETY_MARGIN_MS) return null; // expired or too close to it
+    return cached;
+  } catch (e) {
+    return null;
+  }
+}
+
+function clearDriveTokenCache() {
+  localStorage.removeItem(DRIVE_TOKEN_CACHE_KEY);
+}
+
 // In-memory stand-in for Drive, used only when TEST_MODE is on — see the
 // TEST_MODE branch at the top of each drive*File function below. Exposed
 // directly on the test hook so a test can plant "what's already on Drive"
@@ -1092,6 +1129,7 @@ function connectDrive() {
       return;
     }
     driveAccessToken = resp.access_token;
+    saveDriveTokenCache(resp.access_token, resp.expires_in);
     try {
       await resolveDriveFileId();
       state.settings.driveConnected = true;
@@ -1111,6 +1149,7 @@ function reconnectDrive() {
       return;
     }
     driveAccessToken = resp.access_token;
+    saveDriveTokenCache(resp.access_token, resp.expires_in);
     try {
       await resolveDriveFileId();
       await syncNow(true);
@@ -1123,6 +1162,7 @@ function reconnectDrive() {
 
 function disconnectDrive() {
   driveAccessToken = null;
+  clearDriveTokenCache();
   state.settings.driveConnected = false;
   saveState();
   toast("Disconnected. Nothing was deleted — your data stays on this device and on Drive.");
@@ -1146,12 +1186,27 @@ function handleDriveButtonClick() {
 function initDriveSilentReconnect() {
   if (TEST_MODE) return; // tests drive sync explicitly via the hook, never real OAuth
   if (!driveIsConfigured() || !state.settings.driveConnected) return;
+
+  const cached = loadDriveTokenCache();
+  if (cached) {
+    // Still-valid token from an earlier page load this hour — use it
+    // directly, no Google round-trip at all, so this reload doesn't even
+    // attempt the (increasingly third-party-cookie-blocked) silent iframe
+    // check, let alone show a picker.
+    driveAccessToken = cached.token;
+    resolveDriveFileId()
+      .then(() => syncNow(false))
+      .catch((err) => console.error(err));
+    return;
+  }
+
   driveTokenClientFor(async (resp) => {
     if (resp.error) {
       renderSettings();
       return;
     }
     driveAccessToken = resp.access_token;
+    saveDriveTokenCache(resp.access_token, resp.expires_in);
     try {
       await resolveDriveFileId();
       await syncNow(false);
