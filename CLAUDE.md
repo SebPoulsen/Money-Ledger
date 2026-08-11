@@ -125,6 +125,57 @@ but nothing reaches the UI. If this changes — e.g. sync becomes
 frequent enough that losing edits silently actually causes confusion —
 reopen it rather than quietly adding the toast back.
 
+## Budget design decisions
+
+**Income is a plain counter, never measured against anything (2026-08-11).**
+The three circles on the Budget screen (income, net, expenses) don't share
+one "measure everything against the total budget" rule, even though that
+was the first design on the table. Income specifically doesn't get a
+budget field, doesn't get a predicted/actual split, doesn't turn red — it
+just shows what's been logged. Reasoning, reconstructed from the actual
+conversation: budgeting is optional everywhere else in the app (a category
+with no budget just shows a plain total), and forcing income through the
+same "predicted vs actual" frame would mean either inventing a new
+"income target" setting nobody asked for, or making the circle empty and
+alarming-looking early in the month before payday, for no good reason.
+Expenses and Net *do* gain a second "predicted" line, but only once at
+least one expense category has a budget set — the same graceful
+degradation as the category bars, not a separate mode to turn on.
+
+**Predicted net = actual income so far − total expense budget, not
+predicted income − predicted expenses (2026-08-11).** A real alternative
+was on the table: give income categories budgets too, and define predicted
+net as planned income minus planned expenses — a pure, static plan number.
+Rejected in favor of a live number grounded in what's actually been
+logged, because that's this app's whole ethos (log reality, don't just
+plan) — and because it was resolved by a *better* idea that came up in the
+same conversation: predictable income (a monthly paycheck) isn't a
+budgeting problem at all, it's a "don't make me retype this" problem,
+which is exactly what recurring subscriptions (backlog #3) already exists
+to solve. Income will get *automated*, not *budgeted* — see that backlog
+item. Once recurring income ships, this formula doesn't need to change;
+the income circle already just reads whatever's been logged, automatically
+or by hand.
+
+**Overspend: bar goes to 100% width in `--flag` red, not toward invisible
+(2026-08-11).** A depleting bar that actually hits zero-width reads as
+"nothing here," which is the wrong signal for "you spent past your limit."
+Once spend ≥ budget, the bar pins at full width in red instead of
+continuing to shrink — "gauge in the danger zone," not "gauge empty." The
+number stays honest and uncapped (`2,340 / 2,000`), so the bar never has
+to try to encode *how far* over — the text already says that precisely.
+
+**Budgets live on their own screen, not inline in the category rail
+(2026-08-11).** First idea was reusing the existing colour-picker popout
+in the rail to also hold a budget field. Rejected by Sebastian: a swatch
+button reads as "colour," and budgeting is too central to the feature to
+hide behind an affordance advertising something else. Setting a budget is
+described as "a monthly sit-down, not something I do mid-logging" — it
+earns a dedicated screen. The main register only *reads* budgets (the
+depletion bars); it never lets you set one, and the Budget screen never
+lets you rename/recolour/delete a category — that stays on the register's
+Categories panel, one job per surface.
+
 ## Testing before you claim it works
 
 There is an automated self-test suite for the sync/merge logic —
@@ -228,7 +279,9 @@ Category {
   name: string
   color: string           // hex, chosen via the same hue-slider as Hours Ledger
   direction: "expense" | "income"   // separate lists per direction, not one shared pool
-  budgetMinor: integer | null       // phase 2
+  budgetMinor: integer | null       // recurring monthly amount, expense
+                                     // categories only — set from the Budget
+                                     // screen, never from the main register
   updatedAt: string
   updatedBy: string | null
   deleted: boolean
@@ -308,13 +361,17 @@ ledger-paper plainness *is* the trust signal.
   `--mono` (Spline Sans Mono) for all amounts, dates, and uppercase labels
   — same split as Hours Ledger, where numbers and data are always mono.
 - **Shape language**: square corners, 1px rules, no shadows, no border-radius
-  — carried over exactly as-is from Hours Ledger.
-- **The signature element**: still being decided together — the day×hour
-  grid was Hours Ledger's, but money has no time-of-day. Candidate is a
-  chronological register (a running list with a running balance) paired
-  with a category-totals panel, echoing Hours Ledger's grid+rail layout
-  without copying the grid itself. Confirm once we've actually built and
-  looked at it.
+  — carried over exactly as-is from Hours Ledger. **One deliberate
+  exception**: the three circles on the Budget screen (income/net/expenses).
+  Requested explicitly and repeatedly by Sebastian as that screen's
+  signature element (2026-08-10/11) — not an oversight. Everything else
+  about them stays in the family's material language (1px ink border, no
+  shadow, mono numbers) even though the shape doesn't.
+- **The signature element**: the chronological register (running list
+  grouped by week, then by day) paired with a category-totals panel is
+  what shipped for the main screen — built and confirmed. The Budget
+  screen's three circles are its own, separate signature element; see the
+  shape-language exception above.
 
 ---
 
@@ -346,7 +403,13 @@ ledger-paper plainness *is* the trust signal.
    *depletion* against the budget, not a plain proportion: full/bright at
    the start of the month, draining down as spending accrues against that
    category's (or the month's) budget, turning to `--flag` red once it runs
-   out. Confirmed with Sebastian on 2026-08-03.
+   out. Confirmed with Sebastian on 2026-08-03. **Status: built (2026-08-11)**
+   — see "Budget design decisions" below for the shape it actually took,
+   which moved a fair way from the one-line description above over a longer
+   design conversation. Verified via the TEST_MODE hook (25 checks: rail
+   depletion bars, circle math, category list, editing/clearing a budget)
+   and the sync self-test suite (0 failing/23, unaffected). Not yet
+   real-device-verified by Sebastian.
 3. **Recurring subscriptions.** Declare once (name, amount, category,
    day-of-month), auto-inserted as a real entry every month without
    retyping. Built last because it acts on entries and categories that need
@@ -365,7 +428,12 @@ Do not add features that are not on this list without discussing them first.
 - **Per-category keep/compress/cut verdict**, Hours Ledger's reflective
   judgment ritual — not carried over for now. Revisit once budgets (backlog
   #2) exist, since a verdict without a budget number behind it has less to
-  anchor on for money than it does for time.
+  anchor on for money than it does for time. (Budgets now exist as of
+  2026-08-11 — this is worth actually revisiting, not just noting.)
+- **Budgeting income categories.** Considered and rejected in favor of
+  recurring subscriptions (backlog #3) covering predictable income
+  instead — see "Budget design decisions." Income stays a plain logged
+  counter, no budget field, no target.
 
 ## Open questions
 

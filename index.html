@@ -16,6 +16,7 @@
       <button type="button" id="prevMonth" class="stepper">‹</button>
       <div id="monthLabel" class="monthlabel">—</div>
       <button type="button" id="nextMonth" class="stepper">›</button>
+      <button type="button" id="budgetToggle" class="ghost">Budget</button>
     </div>
   </header>
 
@@ -51,7 +52,36 @@
     </form>
   </section>
 
-  <div class="cols">
+  <section class="budgetview" id="budgetView" hidden>
+    <div class="panel-label">
+      <span>Budget — <span id="budgetMonthLabel">—</span></span>
+      <button type="button" id="budgetBack" class="ghost">← Back to register</button>
+    </div>
+
+    <div class="budgetcircles">
+      <div class="bcircle bcircle-income">
+        <div class="bcircle-num" id="bcIncome">—</div>
+        <div class="bcircle-sub" id="bcIncomeSub"></div>
+        <div class="bcircle-label">Income</div>
+      </div>
+      <div class="bcircle bcircle-net">
+        <div class="bcircle-num" id="bcNet">—</div>
+        <div class="bcircle-sub" id="bcNetSub"></div>
+        <div class="bcircle-label">Net</div>
+      </div>
+      <div class="bcircle bcircle-expenses">
+        <div class="bcircle-num" id="bcExpenses">—</div>
+        <div class="bcircle-sub" id="bcExpensesSub"></div>
+        <div class="bcircle-label">Expenses</div>
+      </div>
+    </div>
+
+    <div class="panel-label"><span>Category budgets</span></div>
+    <div id="budgetCatList" class="budgetcatlist"></div>
+    <div class="hint">Only expense categories carry a budget — income isn't something you budget, it's something you log. Clear a field to stop tracking that category's budget. Renaming or recolouring a category still happens from the register's Categories panel, not here.</div>
+  </section>
+
+  <div class="cols" id="mainCols">
     <main>
       <div class="panel-label">
         <span>Register</span>
@@ -123,7 +153,7 @@
     <ol class="intro-steps">
       <li>Log every expense and every bit of income by hand, as it happens.</li>
       <li>Come back after a week, or a month, and see where it actually went, by category.</li>
-      <li>Budgets and recurring subscriptions come later — this first version is about logging reality.</li>
+      <li>Set a monthly budget per category any time from the Budget screen — recurring subscriptions come later.</li>
     </ol>
     <div class="field">
       <label for="introCurrency">Choose your currency</label>

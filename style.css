@@ -82,6 +82,40 @@ button{cursor:pointer}
 .summary-bar i.spent{background:var(--ink)}
 .summary-bar i.over{background:var(--flag)}
 
+/* budget — dedicated screen (CLAUDE.md backlog #2). The one deliberate
+   departure from square-cornered plainness: three circles, requested
+   explicitly and repeatedly as the screen's signature element, same way
+   the day×hour grid was Hours Ledger's. Everything else about them (1px
+   ink border, no shadow, mono numbers) stays in the family's material
+   language even though the shape doesn't. */
+.budgetview{margin-top:18px}
+.budgetcircles{display:flex;align-items:center;justify-content:center;gap:28px;margin:28px 0 36px;flex-wrap:wrap}
+.bcircle{border:1px solid var(--ink);border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:var(--paper);padding:10px}
+.bcircle-income,.bcircle-expenses{width:118px;height:118px}
+.bcircle-net{width:168px;height:168px}
+.bcircle-num{font-family:var(--mono);font-size:19px;font-weight:700;line-height:1.15;word-break:break-word}
+.bcircle-net .bcircle-num{font-size:25px}
+.bcircle-num.flag{color:var(--flag)}
+.bcircle-income .bcircle-num{color:var(--income)}
+.bcircle-sub{font-family:var(--mono);font-size:9.5px;color:var(--muted);margin-top:3px}
+.bcircle-label{font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-top:5px}
+
+.budgetcatlist{border:1px solid var(--ink)}
+.bcatrow{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--rule-soft)}
+.bcatrow:last-child{border-bottom:0}
+.bcatrow .dot{width:11px;height:11px;flex:none;border:1px solid rgba(0,0,0,.3)}
+.bcatrow .bcat-name{flex:1;font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bcatrow .bcat-spent{font-family:var(--mono);font-size:11px;color:var(--muted);flex:none;white-space:nowrap}
+.bcatrow input.bcat-budget{width:100px;flex:none;font-family:var(--mono);text-align:right;border:1px solid var(--rule);background:transparent;padding:7px 9px;font-size:13px;border-radius:0}
+@media(max-width:700px){
+  .bcircle-income,.bcircle-expenses{width:96px;height:96px}
+  .bcircle-net{width:136px;height:136px}
+  .bcircle-num{font-size:16px}
+  .bcircle-net .bcircle-num{font-size:21px}
+  .bcatrow{flex-wrap:wrap}
+  .bcatrow .bcat-spent{order:3;width:100%;padding-left:21px}
+}
+
 /* register — chronological list, grouped by week with subtotals */
 .register{border:1px solid var(--ink)}
 .weekhead{display:flex;justify-content:space-between;align-items:baseline;background:var(--stripe);padding:8px 12px;border-bottom:1px solid var(--ink);font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}

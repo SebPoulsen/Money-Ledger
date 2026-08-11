@@ -62,6 +62,7 @@ function defaultState() {
     settings: { currency: null, introSeen: false, driveConnected: false, driveFileId: null },
     categories: SEED_CATEGORIES.map((c) => ({
       id: c.id, name: c.name, direction: c.direction, hue: c.hue, color: hueColor(c.hue),
+      budgetMinor: null,
       updatedAt: nowIso(), updatedBy: DEVICE_ID, deleted: false, deletedAt: null,
     })),
     entries: [],
@@ -84,7 +85,10 @@ function loadState() {
     // "now", so it never wins a timestamp comparison against real Drive data.
     if (!parsed.updatedAt) parsed.updatedAt = new Date(0).toISOString();
     (parsed.entries || []).forEach((e) => backfillRecordFields(e, parsed.updatedAt));
-    (parsed.categories || []).forEach((c) => backfillRecordFields(c, parsed.updatedAt));
+    (parsed.categories || []).forEach((c) => {
+      backfillRecordFields(c, parsed.updatedAt);
+      if (c.budgetMinor === undefined) c.budgetMinor = null; // category-only field, phase 2
+    });
     return parsed;
   } catch (e) {
     console.error("Money Ledger: corrupt local data, starting fresh", e);
@@ -374,6 +378,7 @@ function createCategory(fields) {
     direction: fields.direction,
     hue: fields.hue,
     color: hueColor(fields.hue),
+    budgetMinor: null, // expense categories only — see setBudget()
     updatedAt: nowIso(),
     updatedBy: DEVICE_ID,
     deleted: false,
@@ -392,6 +397,7 @@ function editCategory(id, fields) {
   if (fields.name !== undefined) category.name = fields.name;
   if (fields.hue !== undefined) category.hue = fields.hue;
   if (fields.color !== undefined) category.color = fields.color;
+  if (fields.budgetMinor !== undefined) category.budgetMinor = fields.budgetMinor;
   category.updatedAt = nowIso();
   category.updatedBy = DEVICE_ID;
   return category;
@@ -651,7 +657,17 @@ function renderCategoryRail() {
   list.innerHTML = "";
   cats.forEach((c) => {
     const total = totals.get(c.id) || 0;
-    const pct = (total / maxTotal) * 100;
+    // Depletion visual for a budgeted expense category: full at zero spend,
+    // draining down as it's spent, flips to a full red bar once the budget
+    // is gone rather than shrinking to invisible (CLAUDE.md backlog #2).
+    // Categories with no budget keep the plain proportional-to-max bar.
+    const hasBudget = c.direction === "expense" && c.budgetMinor != null && c.budgetMinor > 0;
+    const over = hasBudget && total >= c.budgetMinor;
+    const pct = hasBudget ? (over ? 100 : Math.max(0, (1 - total / c.budgetMinor) * 100)) : (total / maxTotal) * 100;
+    const barColor = over ? "var(--flag)" : c.color;
+    const amountText = hasBudget
+      ? `${formatMoney(total, currency)} / ${formatMoney(c.budgetMinor, currency)}`
+      : formatMoney(total, currency);
     const row = document.createElement("div");
     row.className = "cat";
     row.dataset.id = c.id;
@@ -660,9 +676,9 @@ function renderCategoryRail() {
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:center;gap:8px">
           <input class="nm" value="${escapeHtml(c.name)}">
-          <span style="font-family:var(--mono);font-size:12px;font-weight:600;white-space:nowrap">${formatMoney(total, currency)}</span>
+          <span style="font-family:var(--mono);font-size:12px;font-weight:600;white-space:nowrap;${over ? "color:var(--flag)" : ""}">${amountText}</span>
         </div>
-        <div class="tot-bar"><i style="width:${pct}%;background:${c.color}"></i></div>
+        <div class="tot-bar"><i style="width:${pct}%;background:${barColor}"></i></div>
       </div>
       <button type="button" class="del" title="Delete category">×</button>
       <div class="picker" hidden>
@@ -978,7 +994,7 @@ function newerSide(aIso, bIso) {
 // (bookkeeping, not content — two devices seeding the same starter category
 // a second apart shouldn't count as a difference worth resolving).
 const ENTRY_CONTENT_FIELDS = ["date", "amountMinor", "direction", "categoryId", "note", "recurringId", "deleted", "deletedAt"];
-const CATEGORY_CONTENT_FIELDS = ["name", "direction", "hue", "color", "deleted", "deletedAt"];
+const CATEGORY_CONTENT_FIELDS = ["name", "direction", "hue", "color", "budgetMinor", "deleted", "deletedAt"];
 
 function sameContent(a, b, fields) {
   return fields.every((f) => a[f] === b[f]);
@@ -1227,6 +1243,79 @@ function initFab() {
 
 // ---------- render all ----------
 
+// ---------- rendering: budget ----------
+//
+// Design settled across a longer conversation with Sebastian (see CLAUDE.md
+// backlog #2): income is a plain counter, never measured against anything —
+// budgeting income isn't a thing people do, predictable income belongs to
+// phase 3's recurring entries instead. Expenses and Net stay plain counters
+// too until at least one expense category has a budget, at which point they
+// gain a second, smaller line — no separate "budgeting mode" to turn on.
+function renderBudgetView() {
+  document.getElementById("budgetMonthLabel").textContent = monthLabel(viewYear, viewMonth);
+  const currency = state.settings.currency;
+  const entries = entriesInMonth(viewYear, viewMonth);
+  let income = 0, expenses = 0;
+  entries.forEach((e) => (e.direction === "income" ? (income += e.amountMinor) : (expenses += e.amountMinor)));
+  const net = income - expenses;
+
+  const expenseCats = categoriesFor("expense");
+  const totals = new Map();
+  entries.filter((e) => e.direction === "expense").forEach((e) => totals.set(e.categoryId, (totals.get(e.categoryId) || 0) + e.amountMinor));
+  const totalBudget = expenseCats.reduce((sum, c) => sum + (c.budgetMinor || 0), 0);
+  const hasAnyBudget = expenseCats.some((c) => c.budgetMinor != null && c.budgetMinor > 0);
+
+  document.getElementById("bcIncome").textContent = formatMoney(income, currency);
+
+  const expensesEl = document.getElementById("bcExpenses");
+  expensesEl.textContent = formatMoney(expenses, currency);
+  expensesEl.classList.toggle("flag", hasAnyBudget && expenses > totalBudget);
+  document.getElementById("bcExpensesSub").textContent = hasAnyBudget ? `of ${formatMoney(totalBudget, currency)} planned` : "";
+
+  // Predicted net = actual income logged so far minus total planned
+  // expenses — grounded in what's actually happened, not a pure plan
+  // number, matching this app's whole "log reality" ethos over forecasting.
+  const netEl = document.getElementById("bcNet");
+  netEl.textContent = formatMoney(net, currency);
+  netEl.classList.toggle("flag", net < 0);
+  document.getElementById("bcNetSub").textContent = hasAnyBudget ? `predicted ${formatMoney(income - totalBudget, currency)}` : "";
+
+  const list = document.getElementById("budgetCatList");
+  list.innerHTML = expenseCats.length === 0 ? '<div class="register-empty">No expense categories yet.</div>' : "";
+  expenseCats.forEach((c) => {
+    const spent = totals.get(c.id) || 0;
+    const row = document.createElement("div");
+    row.className = "bcatrow";
+    row.dataset.id = c.id;
+    row.innerHTML = `
+      <span class="dot" style="background:${c.color}"></span>
+      <span class="bcat-name">${escapeHtml(c.name)}</span>
+      <span class="bcat-spent">${formatMoney(spent, currency)} spent</span>
+      <input type="number" class="bcat-budget" inputmode="decimal" step="1" min="0" placeholder="No budget"
+        value="${c.budgetMinor != null ? (c.budgetMinor / 100).toFixed(2) : ""}">
+    `;
+    list.appendChild(row);
+    row.querySelector(".bcat-budget").addEventListener("change", (e) => {
+      const val = parseFloat(e.target.value);
+      const budgetMinor = !e.target.value.trim() || isNaN(val) || val <= 0 ? null : Math.round(val * 100);
+      editCategory(c.id, { budgetMinor });
+      saveState();
+      renderAll();
+    });
+  });
+}
+
+function showBudgetView(show) {
+  document.getElementById("budgetView").hidden = !show;
+  document.getElementById("quickadd").hidden = show;
+  document.getElementById("mainCols").hidden = show;
+}
+
+function initBudgetView() {
+  document.getElementById("budgetToggle").addEventListener("click", () => showBudgetView(true));
+  document.getElementById("budgetBack").addEventListener("click", () => showBudgetView(false));
+}
+
 function renderAll() {
   if (!state.settings.currency) return;
   document.getElementById("monthLabel").textContent = monthLabel(viewYear, viewMonth);
@@ -1234,6 +1323,7 @@ function renderAll() {
   renderRegister();
   renderCategoryRail();
   renderSettings();
+  renderBudgetView();
 }
 
 // ---------- init ----------
@@ -1289,6 +1379,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initMonthNav();
   initCategoryRail();
   initSettings();
+  initBudgetView();
   initFab();
   if (state.settings.currency) renderAll();
   initDriveSilentReconnect();
