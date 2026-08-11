@@ -639,6 +639,25 @@ function populateCategorySelect(select, direction, selectedId) {
   });
 }
 
+// "1st", "2nd", "3rd", "4th"... — handles the 11th/12th/13th exception to
+// the usual 1/2/3 pattern (n % 100 lands them on the "th" fallback, not
+// the "st"/"nd"/"rd" they'd get from n % 10 alone).
+function ordinal(n) {
+  const suffixes = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return n + (suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0]);
+}
+
+function populateDaySelect(select, selectedDay) {
+  select.innerHTML = "";
+  for (let day = 1; day <= 31; day++) {
+    const o = document.createElement("option");
+    o.value = day; o.textContent = ordinal(day);
+    if (day === selectedDay) o.selected = true;
+    select.appendChild(o);
+  }
+}
+
 function initQuickAdd() {
   const form = document.getElementById("quickaddForm");
   const dirBtns = form.querySelectorAll(".dirtoggle button");
@@ -1651,11 +1670,12 @@ function renderRecurringView() {
       <input class="rec-name" value="${escapeHtml(r.name)}">
       <input type="number" class="rec-amount" inputmode="decimal" step="1" min="0" value="${(r.amountMinor / 100).toFixed(2)}">
       <select class="rec-category"></select>
-      <span class="rec-daywrap">Day <input type="number" class="rec-day" min="1" max="31" value="${r.dayOfMonth}"></span>
+      <span class="rec-daywrap">Day <select class="rec-day"></select></span>
       <button type="button" class="del" title="Delete recurring item">×</button>
     `;
     list.appendChild(row);
     populateCategorySelect(row.querySelector(".rec-category"), r.direction, r.categoryId);
+    populateDaySelect(row.querySelector(".rec-day"), r.dayOfMonth);
 
     row.querySelector(".rec-name").addEventListener("change", (e) => {
       const v = e.target.value.trim();
@@ -1705,6 +1725,10 @@ function showRecurringView(show) {
 function initRecurringView() {
   document.getElementById("recurringToggle").addEventListener("click", () => showRecurringView(true));
   document.getElementById("recurringBack").addEventListener("click", () => showRecurringView(false));
+  // Static — 31 fixed options, never depends on state, so populated once
+  // here rather than rebuilt on every render (unlike the category select,
+  // whose options change with recurringDir).
+  populateDaySelect(document.getElementById("newRecDay"), 1);
   document.querySelectorAll("#recurringDirToggle button").forEach((b) => {
     b.addEventListener("click", () => { recurringDir = b.dataset.dir; renderAll(); });
   });
@@ -1719,7 +1743,6 @@ function initRecurringView() {
     saveState();
     document.getElementById("newRecName").value = "";
     document.getElementById("newRecAmount").value = "";
-    document.getElementById("newRecDay").value = "";
     toast(`"${name}" added to Recurring`);
     renderAll();
   });

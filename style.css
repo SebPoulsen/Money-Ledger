@@ -143,13 +143,14 @@ button{cursor:pointer}
 .recrow input.rec-amount{width:88px;flex:none;font-family:var(--mono);text-align:right;border:1px solid var(--rule);background:transparent;padding:7px 8px;font-size:13px;border-radius:0}
 .recrow select.rec-category{flex:none;max-width:130px;border:1px solid var(--rule);background:var(--paper);padding:7px 8px;font-size:12px;border-radius:0}
 .recrow .rec-daywrap{display:flex;align-items:center;gap:4px;flex:none;font-family:var(--mono);font-size:10px;color:var(--muted);text-transform:uppercase}
-.recrow input.rec-day{width:44px;flex:none;font-family:var(--mono);text-align:center;border:1px solid var(--rule);background:transparent;padding:7px 4px;font-size:13px;border-radius:0}
+.recrow select.rec-day{width:64px;flex:none;font-family:var(--mono);text-align:center;border:1px solid var(--rule);background:var(--paper);padding:7px 4px;font-size:13px;border-radius:0}
 .recrow .del{border:0;background:transparent;color:var(--muted);font-size:16px;line-height:1;padding:0 2px;flex:none}
 .recrow .del:hover{color:var(--flag)}
 .addrecurring{display:flex;gap:6px;flex-wrap:wrap}
 .addrecurring input[type=text]{flex:2;min-width:140px;border:1px solid var(--rule);background:transparent;padding:7px 8px;font-size:13px;border-radius:0}
 .addrecurring input[type=number]{width:90px;border:1px solid var(--rule);background:transparent;padding:7px 8px;font-size:13px;border-radius:0}
 .addrecurring select{flex:1;min-width:110px;border:1px solid var(--rule);background:var(--paper);padding:7px 8px;font-size:13px;border-radius:0}
+.addrecurring select#newRecDay{flex:none;width:80px;min-width:0}
 @media(max-width:700px){
   .recrow{flex-wrap:wrap}
   .recrow input.rec-name{width:100%;order:1}
