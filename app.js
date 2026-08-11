@@ -69,7 +69,7 @@ function defaultState() {
       updatedAt: nowIso(), updatedBy: DEVICE_ID, deleted: false, deletedAt: null,
     })),
     entries: [],
-    subscriptions: [],
+    recurring: [],
   };
 }
 
@@ -92,6 +92,13 @@ function loadState() {
       backfillRecordFields(c, parsed.updatedAt);
       if (c.budgetMinor === undefined) c.budgetMinor = null; // category-only field, phase 2
     });
+    // Was `subscriptions` (always an unused empty array — the feature
+    // hadn't shipped yet) before backlog #3 renamed it to match
+    // Entry.recurringId. Real saves only ever had `subscriptions: []`, so
+    // this is a plain rename, not a data-carrying migration.
+    parsed.recurring = parsed.recurring || parsed.subscriptions || [];
+    delete parsed.subscriptions;
+    parsed.recurring.forEach((r) => backfillRecordFields(r, parsed.updatedAt));
     return parsed;
   } catch (e) {
     console.error("Money Ledger: corrupt local data, starting fresh", e);
@@ -406,7 +413,7 @@ function createEntry(fields) {
     direction: fields.direction,
     categoryId: fields.categoryId,
     note: fields.note || "",
-    recurringId: null,
+    recurringId: fields.recurringId || null,
     updatedAt: nowIso(),
     updatedBy: DEVICE_ID,
     deleted: false,
@@ -499,6 +506,117 @@ function undeleteCategory(id) {
   category.updatedAt = nowIso();
   category.updatedBy = DEVICE_ID;
   return category;
+}
+
+// Recurring CRUD — same shape as Category CRUD above. Editing/deleting a
+// Recurring record never touches entries already auto-inserted from it;
+// those are independent history at that point, same principle as editing
+// a Category never rewriting past entries (Recurring design decisions).
+function createRecurring(fields) {
+  const recurring = {
+    id: uid(),
+    name: fields.name,
+    amountMinor: fields.amountMinor,
+    direction: fields.direction,
+    categoryId: fields.categoryId,
+    dayOfMonth: fields.dayOfMonth,
+    updatedAt: nowIso(),
+    updatedBy: DEVICE_ID,
+    deleted: false,
+    deletedAt: null,
+  };
+  state.recurring.push(recurring);
+  return recurring;
+}
+
+function editRecurring(id, fields) {
+  const recurring = state.recurring.find((x) => x.id === id);
+  if (!recurring) return null;
+  if (fields.name !== undefined) recurring.name = fields.name;
+  if (fields.amountMinor !== undefined) recurring.amountMinor = fields.amountMinor;
+  if (fields.direction !== undefined) recurring.direction = fields.direction;
+  if (fields.categoryId !== undefined) recurring.categoryId = fields.categoryId;
+  if (fields.dayOfMonth !== undefined) recurring.dayOfMonth = fields.dayOfMonth;
+  recurring.updatedAt = nowIso();
+  recurring.updatedBy = DEVICE_ID;
+  return recurring;
+}
+
+function deleteRecurring(id) {
+  const recurring = state.recurring.find((x) => x.id === id);
+  if (!recurring) return null;
+  recurring.deleted = true;
+  recurring.deletedAt = nowIso();
+  recurring.updatedAt = nowIso();
+  recurring.updatedBy = DEVICE_ID;
+  return recurring;
+}
+
+function undeleteRecurring(id) {
+  const recurring = state.recurring.find((x) => x.id === id);
+  if (!recurring) return null;
+  recurring.deleted = false;
+  recurring.deletedAt = null;
+  recurring.updatedAt = nowIso();
+  recurring.updatedBy = DEVICE_ID;
+  return recurring;
+}
+
+// ---------- recurring auto-insert ----------
+
+function daysInMonth(y, m) {
+  return new Date(y, m + 1, 0).getDate();
+}
+function clampDay(y, m, day) {
+  return Math.min(day, daysInMonth(y, m));
+}
+
+// Which non-deleted Recurring records are due for a fresh auto-insert
+// right now: today's real date has reached the (clamped) day, and no
+// entry tagged with this recurring id exists yet for today's real month.
+// Pure — takes `today` as a parameter rather than reading the system clock
+// itself, so it's directly testable without mocking Date (CLAUDE.md hard
+// rule 10). Deliberately checks the CURRENT month only, not every month
+// since the record was created or since the app was last opened — see
+// "Recurring design decisions" for why backfilling missed months was
+// scoped out rather than silently bulk-inserting old history.
+function dueRecurring(recurringList, entries, today) {
+  const y = today.getFullYear(), m = today.getMonth();
+  return recurringList.filter((r) => !r.deleted).filter((r) => {
+    const day = clampDay(y, m, r.dayOfMonth);
+    if (today.getDate() < day) return false;
+    const alreadyInserted = entries.some((e) => {
+      if (e.deleted || e.recurringId !== r.id) return false;
+      const d = parseIso(e.date);
+      return d.getFullYear() === y && d.getMonth() === m;
+    });
+    return !alreadyInserted;
+  });
+}
+
+// The side-effecting wrapper: creates the actual entries, saves, toasts,
+// and re-renders. Called once on load (real mode only — TEST_MODE drives
+// dueRecurring/this function explicitly via the hook, never automatically,
+// so it can't interfere with sync tests that don't want surprise entries
+// appearing on reset).
+function applyDueRecurring() {
+  if (!state.settings.currency) return;
+  const today = new Date();
+  const due = dueRecurring(state.recurring, state.entries, today);
+  if (due.length === 0) return;
+  const currency = state.settings.currency;
+  due.forEach((r) => {
+    const day = clampDay(today.getFullYear(), today.getMonth(), r.dayOfMonth);
+    const date = isoDate(new Date(today.getFullYear(), today.getMonth(), day));
+    createEntry({ date, amountMinor: r.amountMinor, direction: r.direction, categoryId: r.categoryId, note: r.name, recurringId: r.id });
+  });
+  saveState();
+  if (due.length === 1) {
+    toast(`${due[0].name}, ${formatMoney(due[0].amountMinor, currency)} logged automatically`);
+  } else {
+    toast(`${due.length} recurring entries logged automatically`);
+  }
+  renderAll();
 }
 
 // ---------- quick-add ----------
@@ -1077,6 +1195,7 @@ function newerSide(aIso, bIso) {
 // a second apart shouldn't count as a difference worth resolving).
 const ENTRY_CONTENT_FIELDS = ["date", "amountMinor", "direction", "categoryId", "note", "recurringId", "deleted", "deletedAt"];
 const CATEGORY_CONTENT_FIELDS = ["name", "direction", "hue", "color", "budgetMinor", "deleted", "deletedAt"];
+const RECURRING_CONTENT_FIELDS = ["name", "amountMinor", "direction", "categoryId", "dayOfMonth", "deleted", "deletedAt"];
 
 function sameContent(a, b, fields) {
   return fields.every((f) => a[f] === b[f]);
@@ -1195,13 +1314,15 @@ async function syncNow(showToast) {
 
   const entryMerge = mergeRecords(state.entries, remote.entries || [], ENTRY_CONTENT_FIELDS);
   const catMerge = mergeRecords(state.categories, remote.categories || [], CATEGORY_CONTENT_FIELDS);
+  const recMerge = mergeRecords(state.recurring, remote.recurring || [], RECURRING_CONTENT_FIELDS);
   state.entries = entryMerge.merged;
   state.categories = catMerge.merged;
+  state.recurring = recMerge.merged;
   state.updatedAt = nowIso();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); // safe local write, before any network risk
 
-  const adopted = entryMerge.adoptedFromRemote + catMerge.adoptedFromRemote;
-  const superseded = entryMerge.superseded + catMerge.superseded;
+  const adopted = entryMerge.adoptedFromRemote + catMerge.adoptedFromRemote + recMerge.adoptedFromRemote;
+  const superseded = entryMerge.superseded + catMerge.superseded + recMerge.superseded;
   renderAll();
 
   try {
@@ -1432,6 +1553,7 @@ function showBudgetView(show) {
   document.getElementById("budgetView").hidden = !show;
   document.getElementById("quickadd").hidden = show;
   document.getElementById("mainCols").hidden = show;
+  if (show) document.getElementById("recurringView").hidden = true;
 }
 
 function setBudgetRingColor(key, hue, hex) {
@@ -1496,6 +1618,113 @@ function initBudgetView() {
   });
 }
 
+// ---------- rendering: recurring ----------
+//
+// Same bones as the category rail: a Spent/Income toggle, a list of rows
+// editable inline (name/amount/category/day), an add form. Editing or
+// deleting a row never touches entries already auto-inserted from it —
+// see createRecurring/editRecurring/deleteRecurring and "Recurring design
+// decisions" in CLAUDE.md.
+
+let recurringDir = "expense";
+
+function renderRecurringView() {
+  document.querySelectorAll("#recurringDirToggle button").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.dataset.dir === recurringDir));
+  });
+
+  const addCatSelect = document.getElementById("newRecCategory");
+  populateCategorySelect(addCatSelect, recurringDir, addCatSelect.value);
+
+  const list = document.getElementById("recurringList");
+  const items = state.recurring.filter((r) => !r.deleted && r.direction === recurringDir);
+  list.innerHTML = items.length === 0
+    ? `<div class="register-empty">No recurring ${recurringDir === "income" ? "income" : "expenses"} yet.</div>`
+    : "";
+  items.forEach((r) => {
+    const cat = catById(r.categoryId);
+    const row = document.createElement("div");
+    row.className = "recrow";
+    row.dataset.id = r.id;
+    row.innerHTML = `
+      <span class="dot" style="background:${cat ? cat.color : "var(--none)"}"></span>
+      <input class="rec-name" value="${escapeHtml(r.name)}">
+      <input type="number" class="rec-amount" inputmode="decimal" step="1" min="0" value="${(r.amountMinor / 100).toFixed(2)}">
+      <select class="rec-category"></select>
+      <span class="rec-daywrap">Day <input type="number" class="rec-day" min="1" max="31" value="${r.dayOfMonth}"></span>
+      <button type="button" class="del" title="Delete recurring item">×</button>
+    `;
+    list.appendChild(row);
+    populateCategorySelect(row.querySelector(".rec-category"), r.direction, r.categoryId);
+
+    row.querySelector(".rec-name").addEventListener("change", (e) => {
+      const v = e.target.value.trim();
+      editRecurring(r.id, { name: v || r.name });
+      saveState();
+      renderAll();
+    });
+    row.querySelector(".rec-amount").addEventListener("change", (e) => {
+      const minor = parseAmountToMinor(e.target.value);
+      if (minor == null) { e.target.value = (r.amountMinor / 100).toFixed(2); return; }
+      editRecurring(r.id, { amountMinor: minor });
+      saveState();
+      renderAll();
+    });
+    row.querySelector(".rec-category").addEventListener("change", (e) => {
+      editRecurring(r.id, { categoryId: e.target.value });
+      saveState();
+      renderAll();
+    });
+    row.querySelector(".rec-day").addEventListener("change", (e) => {
+      const day = Math.round(Number(e.target.value));
+      if (!day || day < 1 || day > 31) { e.target.value = r.dayOfMonth; return; }
+      editRecurring(r.id, { dayOfMonth: day });
+      saveState();
+      renderAll();
+    });
+    row.querySelector(".del").addEventListener("click", () => {
+      deleteRecurring(r.id);
+      saveState();
+      toast(`"${r.name}" removed from Recurring`, () => {
+        undeleteRecurring(r.id);
+        saveState();
+        renderAll();
+      });
+      renderAll();
+    });
+  });
+}
+
+function showRecurringView(show) {
+  document.getElementById("recurringView").hidden = !show;
+  document.getElementById("quickadd").hidden = show;
+  document.getElementById("mainCols").hidden = show;
+  if (show) document.getElementById("budgetView").hidden = true;
+}
+
+function initRecurringView() {
+  document.getElementById("recurringToggle").addEventListener("click", () => showRecurringView(true));
+  document.getElementById("recurringBack").addEventListener("click", () => showRecurringView(false));
+  document.querySelectorAll("#recurringDirToggle button").forEach((b) => {
+    b.addEventListener("click", () => { recurringDir = b.dataset.dir; renderAll(); });
+  });
+  document.getElementById("addRecurringForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const name = document.getElementById("newRecName").value.trim();
+    const amountMinor = parseAmountToMinor(document.getElementById("newRecAmount").value);
+    const categoryId = document.getElementById("newRecCategory").value;
+    const day = Math.round(Number(document.getElementById("newRecDay").value));
+    if (!name || amountMinor == null || !categoryId || !day || day < 1 || day > 31) return;
+    createRecurring({ name, amountMinor, direction: recurringDir, categoryId, dayOfMonth: day });
+    saveState();
+    document.getElementById("newRecName").value = "";
+    document.getElementById("newRecAmount").value = "";
+    document.getElementById("newRecDay").value = "";
+    toast(`"${name}" added to Recurring`);
+    renderAll();
+  });
+}
+
 function renderAll() {
   if (!state.settings.currency) return;
   document.getElementById("monthLabel").textContent = monthLabel(viewYear, viewMonth);
@@ -1504,6 +1733,7 @@ function renderAll() {
   renderCategoryRail();
   renderSettings();
   renderBudgetView();
+  renderRecurringView();
   refreshQuickAddCategories();
 }
 
@@ -1562,6 +1792,12 @@ function exposeTestHook() {
     getViewMonth: () => viewMonth,
     getViewYear: () => viewYear,
     setView: (y, m) => { viewYear = y; viewMonth = m; renderAll(); },
+
+    createRecurring, editRecurring, deleteRecurring, undeleteRecurring,
+    daysInMonth, clampDay, dueRecurring, applyDueRecurring,
+    RECURRING_CONTENT_FIELDS,
+    getRecurringDir: () => recurringDir,
+    setRecurringDir: (dir) => { recurringDir = dir; renderAll(); },
   };
 }
 
@@ -1573,8 +1809,13 @@ document.addEventListener("DOMContentLoaded", () => {
   initCategoryRail();
   initSettings();
   initBudgetView();
+  initRecurringView();
   initFab();
   if (state.settings.currency) renderAll();
+  // Real mode only — TEST_MODE drives dueRecurring/applyDueRecurring
+  // explicitly via the hook, so a sync test's resetState() never gets a
+  // surprise auto-inserted entry it didn't ask for.
+  if (!TEST_MODE) applyDueRecurring();
   initDriveSilentReconnect();
   if (TEST_MODE) exposeTestHook();
 });

@@ -17,6 +17,7 @@
       <div id="monthLabel" class="monthlabel">—</div>
       <button type="button" id="nextMonth" class="stepper">›</button>
       <button type="button" id="budgetToggle" class="ghost">Budget</button>
+      <button type="button" id="recurringToggle" class="ghost">Recurring</button>
     </div>
   </header>
 
@@ -121,6 +122,31 @@
 
     <div class="panel-label"><span>Category budgets</span></div>
     <div id="budgetCatList" class="budgetcatlist"></div>
+  </section>
+
+  <section class="recurringview" id="recurringView" hidden>
+    <div class="panel-label">
+      <span>Recurring</span>
+      <button type="button" id="recurringBack" class="ghost">← Back to register</button>
+    </div>
+
+    <div class="recurring-togglerow">
+      <span id="recurringDirToggle" class="dirtoggle">
+        <button type="button" data-dir="expense" aria-pressed="true">Spent</button>
+        <button type="button" data-dir="income" aria-pressed="false">Income</button>
+      </span>
+    </div>
+    <div id="recurringList" class="recurringlist"></div>
+
+    <div class="panel-label"><span>Add recurring</span></div>
+    <form id="addRecurringForm" class="addrecurring">
+      <input type="text" id="newRecName" placeholder="Name (e.g. Spotify, Salary)">
+      <input type="number" id="newRecAmount" inputmode="decimal" step="1" min="0" placeholder="0.00">
+      <select id="newRecCategory"></select>
+      <input type="number" id="newRecDay" min="1" max="31" placeholder="Day">
+      <button type="submit" class="ghost">Add</button>
+    </form>
+    <div class="hint">Auto-inserted as a real entry into the register on its day each month — editing or deleting a recurring item never changes entries already logged from it.</div>
   </section>
 
   <div class="cols" id="mainCols">

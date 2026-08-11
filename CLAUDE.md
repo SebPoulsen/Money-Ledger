@@ -324,6 +324,75 @@ via `.toFixed(2)` — deliberately unchanged, since a field you're about to
 type into benefits from a stable, predictable format more than a
 display-only figure does.
 
+## Recurring design decisions
+
+**Covers income as well as expenses, on one screen, split by the same
+Spent/Income toggle used everywhere else (2026-08-11).** The backlog
+originally described this as "recurring subscriptions" — expense-only by
+implication. Scoped wider before building anything: "Budget design
+decisions" had already committed to recurring entries being the answer to
+predictable income (a paycheck), specifically as the alternative to
+budgeting income categories (rejected — see "Out of scope"), so building
+expense-only now would have meant reopening this feature almost
+immediately. One screen, not two competing header buttons, because it's
+one underlying record type either way — but never one mixed list: every
+other direction-aware surface in this app (quick-add, the category rail,
+`Category.direction` itself) splits expense/income into two separate
+views because a mixed list reads as confusing, and "Netflix −89 kr." next
+to "Paycheck +28,500 kr." in one list would be exactly that. Named
+"Recurring," not "Subscriptions" — the latter doesn't linguistically cover
+a paycheck, and "Recurring" already matched `Entry.recurringId`, a field
+name that (in hindsight) had the right instinct before the screen's scope
+was even discussed out loud.
+
+**Auto-insert is silent plus a toast, not a manual confirm step
+(2026-08-11).** A real alternative was on the table: surface "Rent, 6,250
+kr., due today — log it?" and wait for a tap, closer to the app's "log
+reality, don't infer it" ethos (see the bank-auto-import rejection in "Out
+of scope"). Rejected because it reintroduces the retyping-adjacent
+friction this feature exists to remove — if every recurring entry still
+needs a tap, declaring it once saved nothing. The distinction from
+bank-linked auto-import: a bank feed pulls from an external, untrusted
+source that might not reflect what you actually intended; a Recurring
+record is something *you* explicitly declared once ("yes, Spotify is 89
+kr. on the 5th, every month") — auto-inserting from your own prior
+declaration isn't inference, it's not making you retype something you
+already told the app was going to happen. The toast keeps it from being a
+silent surprise without requiring a tap either.
+
+**Auto-insert only ever checks the current real-world month — it does not
+backfill months missed while the app was closed (2026-08-11).** If you
+don't open the app for two months, you get the most recent month
+backfilled next time you open it, not both. Considered checking every
+month between "last opened" and "now" instead, but rejected: silently
+bulk-inserting several months of history the first time a long-standing
+subscription gets declared felt like more surprise than this feature
+should introduce, not less. Revisit if missed months turn out to be a
+real annoyance in practice — the pure `dueRecurring(recurringList,
+entries, today)` function only checks one month by design, so extending
+it would mean changing that function's contract, not just its caller.
+
+**Editing or deleting a Recurring record never touches entries already
+auto-inserted from it.** Same principle as editing a Category never
+rewriting an existing Entry's stored fields — once an entry exists, it's
+independent history reflecting what was true at the time it was created,
+not a live reference to the Recurring record's current values. Deleting a
+Recurring record is a tombstone (same as Entry/Category), stops future
+auto-insertion, and leaves every entry it already produced untouched — no
+exception carved into hard rule 6 for this record type, it just already
+satisfies it by construction.
+
+**Recurring records sync via the same per-record merge as Entry/Category,
+not local-only.** Consistent with the phone-to-log/laptop-to-review
+workflow this whole app is built around — a subscription declared on one
+device should apply on the other without re-declaring it. Uses the same
+tombstone shape (`updatedAt`/`updatedBy`/`deleted`/`deletedAt`) and the
+same `mergeRecords` algorithm, keyed by `RECURRING_CONTENT_FIELDS`
+(`name`, `amountMinor`, `direction`, `categoryId`, `dayOfMonth`, `deleted`,
+`deletedAt`) — no new merge logic needed, `mergeRecords` was already
+generic over "a collection of tombstoned records," proven by Entry and
+Category both already using it.
+
 ## Testing before you claim it works
 
 There is an automated self-test suite — `money-ledger-selftest.html`,
@@ -402,7 +471,7 @@ failing/total summary.
   delete/import/clear-month flows don't hang a headless run waiting for a
   dialog no one will click.
 
-**What it covers (102 tests as of 2026-08-11, up from 23):**
+**What it covers (132 tests as of 2026-08-11, up from 23):**
 - **Sync/merge** (the original 23): the `mergeRecords` algorithm directly
   (only-local, only-remote, both-edited, delete-vs-edit,
   identical/skewed/ambiguous timestamps, empty sides, seed-category id
@@ -446,6 +515,17 @@ failing/total summary.
   (2026-08-11 regression). Empty states are asserted as empty (a dash,
   `ring-empty`) rather than as a rendered zero, for every circle that has
   an empty state.
+- **Recurring:** day-of-month clamping (`clampDay`/`daysInMonth`, incl.
+  leap-year February), `dueRecurring`'s pure due-detection logic (not yet
+  due, due with nothing inserted, already inserted this month, an entry
+  from a previous month not counting, a deleted auto-inserted entry not
+  counting, a different recurring id not counting, a deleted recurring
+  record never due), `applyDueRecurring` creating a real entry with the
+  right fields and not double-inserting on a second call the same month,
+  editing/deleting a Recurring record never touching entries already
+  produced from it, sync merge via `RECURRING_CONTENT_FIELDS`, and
+  rendering (the screen split by direction, adding one through the real
+  DOM form, editing a name inline, deleting through the DOM).
 
 **The standing rule, going forward, same as Hours Ledger: every bug gets a
 test that would have caught it, written before the fix, watched to fail
@@ -494,7 +574,7 @@ Entry {
   direction: "expense" | "income"
   categoryId: string
   note: string           // optional, "" if empty
-  recurringId: string | null   // set only if auto-inserted from a subscription (phase 3)
+  recurringId: string | null   // set only if auto-inserted from a Recurring record
   updatedAt: string       // ISO 8601, bumped on every change to THIS record —
                           // what sync merges by, never the whole-file updatedAt
   updatedBy: string | null   // DEVICE_ID of whoever last touched this record;
@@ -518,12 +598,24 @@ Category {
   deletedAt: string | null
 }
 
-Subscription {            // phase 3
+Recurring {                // backlog #3, named to match Entry.recurringId
+                           // below — covers both subscriptions (expense)
+                           // and predictable income (e.g. a paycheck), not
+                           // expense-only, see "Recurring design decisions"
   id: string
   name: string
   amountMinor: integer
+  direction: "expense" | "income"   // same split as Category/Entry — a
+                                     // Recurring screen mixing "Netflix"
+                                     // and "Paycheck" in one list would be
+                                     // exactly the confusion the app avoids
+                                     // everywhere else
   categoryId: string
-  dayOfMonth: integer     // 1-31, clamped to last day of short months
+  dayOfMonth: integer     // 1-31, clamped to the real last day of short months
+  updatedAt: string        // syncs like Entry/Category — same tombstone shape
+  updatedBy: string | null
+  deleted: boolean
+  deletedAt: string | null
 }
 
 Settings {
@@ -540,7 +632,7 @@ State (top-level, the whole localStorage/Drive-file blob) {
   settings: Settings
   categories: Category[]
   entries: Entry[]
-  subscriptions: Subscription[]
+  recurring: Recurring[]
 }
 ```
 
@@ -569,9 +661,14 @@ from "another device's edit" (where clock skew is a genuine concern).
 
 ## How the code is organised
 
-Not yet built. Expect the same shape as Hours Ledger: `index.html` +
-`style.css` + `app.js`, one file per concern, no framework — update this
-section once the real structure exists.
+Same shape as Hours Ledger, as planned: `index.html` (markup for every
+screen — register, Budget, Recurring, edit sheet, intro — toggled via
+`hidden`, not separate pages), `style.css`, and `app.js` (one file,
+organized in commented sections: storage/schema, utils, mutations
+[create/edit/delete for Entry/Category/Recurring], quick-add, edit sheet,
+month nav, rendering per screen, Drive sync, the `__ML_TEST__` hook, init).
+No framework, no bundler, no build step — all three files loaded directly
+by the browser, same as Hours Ledger.
 
 ## Design constraints
 
@@ -636,14 +733,25 @@ ledger-paper plainness *is* the trust signal.
    out. Confirmed with Sebastian on 2026-08-03. **Status: built (2026-08-11)**
    — see "Budget design decisions" below for the shape it actually took,
    which moved a fair way from the one-line description above over a longer
-   design conversation. Verified via the TEST_MODE hook (25 checks: rail
-   depletion bars, circle math, category list, editing/clearing a budget)
-   and the sync self-test suite (0 failing/23, unaffected). Not yet
+   design conversation. Verified via on-screen screenshots (the circles,
+   the fill-up bars, the ring colour picker) and the permanent self-test
+   suite, which now covers this area directly rather than via disposable
+   manual checks — see "Testing before you claim it works." Not yet
    real-device-verified by Sebastian.
-3. **Recurring subscriptions.** Declare once (name, amount, category,
+3. **Recurring.** Declare once (name, amount, direction, category,
    day-of-month), auto-inserted as a real entry every month without
-   retyping. Built last because it acts on entries and categories that need
-   to already be solid.
+   retyping — covers both expense subscriptions and predictable income (a
+   paycheck), not expense-only; see "Recurring design decisions."
+   **Status: built (2026-08-11).** Own screen (button next to "Budget" in
+   the header), split by a Spent/Income toggle like everywhere else
+   direction-aware in this app. Syncs via the same per-record merge as
+   Entry/Category. Auto-insert only ever checks the current real-world
+   month — deliberately does not backfill months missed while the app
+   wasn't opened; see "Recurring design decisions" for why. Verified via
+   the self-test suite (clamping, due-detection, auto-insert, sync merge,
+   rendering) and an on-screen screenshot showing the actual auto-insert
+   split correctly across due/not-yet-due items in the register. Not yet
+   real-device-verified by Sebastian.
 
 Do not add features that are not on this list without discussing them first.
 
@@ -661,9 +769,10 @@ Do not add features that are not on this list without discussing them first.
   anchor on for money than it does for time. (Budgets now exist as of
   2026-08-11 — this is worth actually revisiting, not just noting.)
 - **Budgeting income categories.** Considered and rejected in favor of
-  recurring subscriptions (backlog #3) covering predictable income
-  instead — see "Budget design decisions." Income stays a plain logged
-  counter, no budget field, no target.
+  Recurring (backlog #3, built 2026-08-11) covering predictable income
+  instead — see "Budget design decisions" and "Recurring design
+  decisions." Income stays a plain logged counter, no budget field, no
+  target.
 
 ## Open questions
 

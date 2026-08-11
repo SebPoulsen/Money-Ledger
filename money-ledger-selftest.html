@@ -850,6 +850,165 @@ async function runTests(H,d){
       H.getState().categories.find(function(c){return c.id==="seed-groceries";}).budgetMinor===null);
   })();
 
+  /* ============ recurring (backlog #3, 2026-08-11) ============
+     Covers both subscriptions (expense) and predictable income — see
+     CLAUDE.md "Recurring design decisions." dueRecurring/applyDueRecurring
+     take `today` as a parameter rather than reading the system clock, so
+     these are direct, deterministic tests, not date-mocking. */
+
+  /* 44. day-of-month clamping */
+  (function(){
+    assert("clampDay leaves a valid day alone (Jan 31 has 31 days)",
+      H.clampDay(2026,0,31)===31);
+    assert("clampDay clamps day 31 down to 30 in a 30-day month (April)",
+      H.clampDay(2026,3,31)===30);
+    assert("clampDay clamps day 31 down to 28 in February of a non-leap year",
+      H.clampDay(2026,1,31)===28);
+    assert("clampDay clamps day 31 down to 29 in February of a leap year",
+      H.clampDay(2028,1,31)===29);
+    assert("daysInMonth reports 31 for January",
+      H.daysInMonth(2026,0)===31);
+  })();
+
+  /* 45. dueRecurring: the pure due-detection logic */
+  (function(){
+    var rec={id:"r1",name:"Rent",amountMinor:625000,direction:"expense",categoryId:"seed-rent",dayOfMonth:5,deleted:false};
+    var today=new Date(2026,7,4); // August 4th — day 5 hasn't arrived yet
+    assert("a recurring item is not due before its day arrives this month",
+      H.dueRecurring([rec],[],today).length===0);
+    var todayOn=new Date(2026,7,5); // exactly on day 5
+    assert("a recurring item is due on its exact day if nothing's been inserted yet",
+      H.dueRecurring([rec],[],todayOn).length===1);
+    var todayAfter=new Date(2026,7,20); // well past day 5
+    assert("a recurring item is still due later in the month if nothing's been inserted yet",
+      H.dueRecurring([rec],[],todayAfter).length===1);
+  })();
+  (function(){
+    var rec={id:"r1",name:"Rent",amountMinor:625000,direction:"expense",categoryId:"seed-rent",dayOfMonth:5,deleted:false};
+    var todayOn=new Date(2026,7,5);
+    var alreadyThisMonth=[{date:"2026-08-05",recurringId:"r1",deleted:false}];
+    assert("a recurring item already inserted this month is not due again",
+      H.dueRecurring([rec],alreadyThisMonth,todayOn).length===0);
+    var lastMonthOnly=[{date:"2026-07-05",recurringId:"r1",deleted:false}];
+    assert("an entry from a PREVIOUS month doesn't count — still due this month",
+      H.dueRecurring([rec],lastMonthOnly,todayOn).length===1);
+    var deletedEntry=[{date:"2026-08-05",recurringId:"r1",deleted:true}];
+    assert("a deleted (undone) auto-inserted entry doesn't count as already-inserted — still due",
+      H.dueRecurring([rec],deletedEntry,todayOn).length===1);
+    var otherRecurring=[{date:"2026-08-05",recurringId:"some-other-id",deleted:false}];
+    assert("an entry tagged with a DIFFERENT recurring id doesn't satisfy this one — still due",
+      H.dueRecurring([rec],otherRecurring,todayOn).length===1);
+  })();
+  (function(){
+    var deletedRec={id:"r1",name:"Cancelled",amountMinor:10000,direction:"expense",categoryId:"seed-other-expense",dayOfMonth:1,deleted:true};
+    var today=new Date(2026,7,15);
+    assert("a deleted recurring item is never due",
+      H.dueRecurring([deletedRec],[],today).length===0);
+  })();
+
+  /* 46. applyDueRecurring: the actual auto-insert, through real state */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var rec=H.createRecurring({name:"Spotify",amountMinor:8900,direction:"expense",categoryId:"seed-subscriptions",dayOfMonth:1});
+    H.saveState();
+    var todayIsDue=H.dueRecurring(H.getState().recurring,H.getState().entries,new Date());
+    assert("a freshly-created recurring item with dayOfMonth 1 is due today (any day >= 1)",
+      todayIsDue.some(function(r){return r.id===rec.id;}));
+    H.applyDueRecurring();
+    var live=H.getState().entries.filter(function(e){return !e.deleted && e.recurringId===rec.id;});
+    assert("applyDueRecurring creates exactly one real entry from a due recurring item",
+      live.length===1);
+    assert("the auto-inserted entry carries the recurring item's amount, direction, and category",
+      live[0].amountMinor===8900 && live[0].direction==="expense" && live[0].categoryId==="seed-subscriptions");
+    assert("the auto-inserted entry's note defaults to the recurring item's name",
+      live[0].note==="Spotify");
+    assert("the auto-inserted entry is tagged with the recurring item's id",
+      live[0].recurringId===rec.id);
+    H.applyDueRecurring(); // calling it again the same "today" must not double-insert
+    var liveAfterSecondCall=H.getState().entries.filter(function(e){return !e.deleted && e.recurringId===rec.id;});
+    assert("calling applyDueRecurring again the same day/month does not insert a duplicate",
+      liveAfterSecondCall.length===1);
+  })();
+
+  /* 47. editing/deleting a recurring item never touches past auto-inserted entries */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var rec=H.createRecurring({name:"Netflix",amountMinor:12900,direction:"expense",categoryId:"seed-subscriptions",dayOfMonth:1});
+    H.applyDueRecurring();
+    var entry=H.getState().entries.find(function(e){return e.recurringId===rec.id;});
+    H.editRecurring(rec.id,{amountMinor:15900});
+    assert("editing a recurring item's amount does not change an entry already inserted from it",
+      H.getState().entries.find(function(e){return e.id===entry.id;}).amountMinor===12900);
+    H.deleteRecurring(rec.id);
+    assert("deleting a recurring item does not delete an entry already inserted from it",
+      !H.getState().entries.find(function(e){return e.id===entry.id;}).deleted);
+  })();
+
+  /* 48. sync merge: Recurring records go through the same mergeRecords
+     algorithm as Entry/Category, keyed by RECURRING_CONTENT_FIELDS */
+  (function(){
+    var localOnly={id:"r1",name:"Gym",amountMinor:29900,direction:"expense",categoryId:"seed-health",dayOfMonth:1,
+      updatedAt:"2026-08-01T10:00:00.000Z",updatedBy:"device-A",deleted:false,deletedAt:null};
+    var r=H.mergeRecords([localOnly],[],H.RECURRING_CONTENT_FIELDS);
+    assert("a recurring item present only locally is kept through merge",
+      r.merged.length===1 && r.merged[0].id==="r1");
+    var remoteEdit=Object.assign({},localOnly,{amountMinor:34900,updatedAt:"2026-08-01T10:00:10.000Z",updatedBy:"device-B"});
+    var r2=H.mergeRecords([localOnly],[remoteEdit],H.RECURRING_CONTENT_FIELDS);
+    assert("the newer edit of a genuinely conflicting recurring item wins",
+      r2.merged[0].amountMinor===34900);
+  })();
+
+  /* 49. rendering: the Recurring screen itself */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.createRecurring({name:"Rent",amountMinor:625000,direction:"expense",categoryId:"seed-rent",dayOfMonth:1});
+    H.createRecurring({name:"Salary",amountMinor:2850000,direction:"income",categoryId:"seed-salary",dayOfMonth:25});
+    H.setRecurringDir("expense");
+    var expenseRows=d.querySelectorAll("#recurringList .recrow");
+    assert("the Recurring screen shows expense items when the Spent toggle is active",
+      expenseRows.length===1 && expenseRows[0].querySelector(".rec-name").value==="Rent");
+    H.setRecurringDir("income");
+    var incomeRows=d.querySelectorAll("#recurringList .recrow");
+    assert("the Recurring screen shows income items when the Income toggle is active, not mixed with expenses",
+      incomeRows.length===1 && incomeRows[0].querySelector(".rec-name").value==="Salary");
+  })();
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.setRecurringDir("expense");
+    H.renderAll();
+    d.getElementById("newRecName").value="Spotify";
+    d.getElementById("newRecAmount").value="89";
+    d.getElementById("newRecCategory").value="seed-subscriptions";
+    d.getElementById("newRecDay").value="5";
+    d.getElementById("addRecurringForm").dispatchEvent(new (d.defaultView.Event)("submit",{cancelable:true}));
+    var created=H.getState().recurring.find(function(r){return r.name==="Spotify";});
+    assert("submitting the add-recurring form creates a real Recurring record via the actual DOM form",
+      !!created && created.amountMinor===8900 && created.dayOfMonth===5 && created.categoryId==="seed-subscriptions");
+    assert("the new recurring item appears in the rendered list without a reload",
+      !!d.querySelector('#recurringList .recrow[data-id="'+created.id+'"]'));
+  })();
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var rec=H.createRecurring({name:"Gym",amountMinor:29900,direction:"expense",categoryId:"seed-health",dayOfMonth:1});
+    H.setRecurringDir("expense");
+    H.renderAll();
+    var nameInput=d.querySelector('.recrow[data-id="'+rec.id+'"] .rec-name');
+    nameInput.value="Gym membership";
+    fireChange(nameInput);
+    assert("editing a recurring item's name inline through the DOM commits the change",
+      H.getState().recurring.find(function(r){return r.id===rec.id;}).name==="Gym membership");
+    d.querySelector('.recrow[data-id="'+rec.id+'"] .del').click();
+    assert("deleting a recurring item through the DOM tombstones it (soft delete)",
+      H.getState().recurring.find(function(r){return r.id===rec.id;}).deleted===true);
+    assert("a deleted recurring item no longer renders in the list",
+      !d.querySelector('.recrow[data-id="'+rec.id+'"]'));
+  })();
+
   return results;
 }
 })();
