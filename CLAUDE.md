@@ -157,13 +157,20 @@ item. Once recurring income ships, this formula doesn't need to change;
 the income circle already just reads whatever's been logged, automatically
 or by hand.
 
-**Overspend: bar goes to 100% width in `--flag` red, not toward invisible
-(2026-08-11).** A depleting bar that actually hits zero-width reads as
-"nothing here," which is the wrong signal for "you spent past your limit."
-Once spend ≥ budget, the bar pins at full width in red instead of
-continuing to shrink — "gauge in the danger zone," not "gauge empty." The
-number stays honest and uncapped (`2,340 / 2,000`), so the bar never has
-to try to encode *how far* over — the text already says that precisely.
+**Category bars fill up as you spend, not drain down (2026-08-11, revised
+same day).** Originally built as a depleting gauge — full/bright at zero
+spend, draining down as spend accrues, pinning back to a full red bar once
+over budget rather than shrinking to invisible. Reconsidered after seeing
+it on screen: the fill-up direction is the more familiar "progress toward
+a limit" pattern (it's what the Summary panel's spent-vs-income bar and
+the budget circles' rings both already do), and running two opposite
+metaphors for the same underlying concept — spent vs. a limit — on one
+screen read as inconsistent rather than deliberate. Now: empty at zero
+spend, filling as you spend, pinning at 100% width in `--flag` red once
+spend exceeds budget (strictly `>`, not `>=` — hitting the budget exactly
+still reads as normal, not over). The number stays honest and uncapped
+(`2,340 / 2,000`), so the bar never has to encode *how far* over — the
+text already says that precisely.
 
 **Budgets live on their own screen, not inline in the category rail
 (2026-08-11).** First idea was reusing the existing colour-picker popout
@@ -175,6 +182,60 @@ earns a dedicated screen. The main register only *reads* budgets (the
 depletion bars); it never lets you set one, and the Budget screen never
 lets you rename/recolour/delete a category — that stays on the register's
 Categories panel, one job per surface.
+
+**Budget circles are SVG progress rings, not text-in-a-circle
+(2026-08-11).** The original build put a full sentence ("of 9,100.00 kr.
+planned") inside a plain bordered circle — a circle is a bad container for
+text, the words crowd the INCOME/NET/EXPENSES label out once a number
+appears, and the border was too thin to read as a deliberate shape.
+Rewritten so the ring itself carries the data: an 8–12px arc on a pale
+track, filling clockwise from the top. Inside the ring: one compact number
+only, no currency symbol, no decimals (`2,704`, via a dedicated
+`formatCompact`, distinct from the app-wide `formatMoney` rule below — a
+headline figure is allowed to be less precise than a ledger figure). The
+context ("· OF 9,100", "· PREDICTED 2,700") moved to an uppercase mono
+caption *below* the ring, not fighting for space inside it.
+- **Colour, corrected same day.** First pass coloured income green and
+  expenses red-when-under-budget-too, matching entry-row conventions.
+  Sebastian's own reaction: seeing the expenses circle in warning-adjacent
+  red while comfortably under budget read as "I've overspent" even when he
+  hadn't. Changed to: all three circles neutral ink by default; Expenses
+  turns `--flag` red only once spend exceeds its total budget; Net turns
+  `--flag` red only when negative; Income never turns red and is no longer
+  green either — colour on this screen now means exactly one thing
+  (over/under, or positive/negative), not "which direction is this money."
+- **Income and Net rings have no natural fill percentage.** Income isn't
+  measured against anything (see above), and Net's only spec was "reads
+  from its sign" — neither has a real denominator to fill proportionally
+  against. Both rings are therefore a presence indicator, not a
+  proportional gauge: full ring once there's any relevant activity this
+  month, ghosted (dimmed, dashed "—" instead of a number) before that.
+  Income ghosts when nothing's been logged; Net ghosts when there's been
+  no income *and* no expenses at all. This is an interpretation of "fills
+  as income lands" from the original request, not a literal spec — worth
+  re-raising if it stops feeling right in daily use. Expenses is never
+  ghosted this way: with no budget set it just shows a flat, un-filled
+  ring with the real number (a known amount not measured against
+  anything), since "no budget" and "nothing logged" are different states
+  and only the second one means "there's genuinely nothing here yet."
+- The empty-state CSS class was almost named `.ghost`, which collides with
+  the app's existing `.ghost` button utility class (`border:1px solid
+  var(--rule)`, used on "Budget," "Connect Google Drive," etc.) — caught
+  by screenshotting the empty state and seeing a stray box around the
+  ring. Named `.ring-empty` instead. Worth remembering if a future class
+  name reuses a common word like "ghost," "active," or "empty" — check
+  for an existing global utility of the same name before reusing it.
+
+**Amounts hide decimals when they're whole, everywhere (2026-08-11).**
+`formatMoney` now passes `minimumFractionDigits: 0` when the amount has no
+minor-unit remainder, so `4,250 kr.` displays instead of `4,250.00 kr.` —
+applies to the register, the summary panel, the category rail, and the
+budget screen, since all four already route through the one shared
+formatter. Editable input fields (the edit-entry amount field, the
+per-category budget input) still pre-fill with a fixed two-decimal string
+via `.toFixed(2)` — deliberately unchanged, since a field you're about to
+type into benefits from a stable, predictable format more than a
+display-only figure does.
 
 ## Testing before you claim it works
 

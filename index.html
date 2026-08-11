@@ -60,25 +60,39 @@
 
     <div class="budgetcircles">
       <div class="bcircle bcircle-income">
-        <div class="bcircle-num" id="bcIncome">—</div>
-        <div class="bcircle-sub" id="bcIncomeSub"></div>
-        <div class="bcircle-label">Income</div>
+        <div class="bcircle-ring" id="bcIncomeRing">
+          <svg viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="bcring-track" cx="60" cy="60" r="52"></circle>
+            <circle class="bcring-arc" id="bcIncomeArc" cx="60" cy="60" r="52" transform="rotate(-90 60 60)"></circle>
+          </svg>
+          <div class="bcircle-num" id="bcIncome">—</div>
+        </div>
+        <div class="bcircle-caption" id="bcIncomeCap">Income</div>
       </div>
       <div class="bcircle bcircle-net">
-        <div class="bcircle-num" id="bcNet">—</div>
-        <div class="bcircle-sub" id="bcNetSub"></div>
-        <div class="bcircle-label">Net</div>
+        <div class="bcircle-ring" id="bcNetRing">
+          <svg viewBox="0 0 168 168" aria-hidden="true">
+            <circle class="bcring-track" cx="84" cy="84" r="76"></circle>
+            <circle class="bcring-arc" id="bcNetArc" cx="84" cy="84" r="76" transform="rotate(-90 84 84)"></circle>
+          </svg>
+          <div class="bcircle-num" id="bcNet">—</div>
+        </div>
+        <div class="bcircle-caption" id="bcNetCap">Net</div>
       </div>
       <div class="bcircle bcircle-expenses">
-        <div class="bcircle-num" id="bcExpenses">—</div>
-        <div class="bcircle-sub" id="bcExpensesSub"></div>
-        <div class="bcircle-label">Expenses</div>
+        <div class="bcircle-ring" id="bcExpensesRing">
+          <svg viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="bcring-track" cx="60" cy="60" r="52"></circle>
+            <circle class="bcring-arc" id="bcExpensesArc" cx="60" cy="60" r="52" transform="rotate(-90 60 60)"></circle>
+          </svg>
+          <div class="bcircle-num" id="bcExpenses">—</div>
+        </div>
+        <div class="bcircle-caption" id="bcExpensesCap">Expenses</div>
       </div>
     </div>
 
     <div class="panel-label"><span>Category budgets</span></div>
     <div id="budgetCatList" class="budgetcatlist"></div>
-    <div class="hint">Only expense categories carry a budget — income isn't something you budget, it's something you log. Clear a field to stop tracking that category's budget. Renaming or recolouring a category still happens from the register's Categories panel, not here.</div>
   </section>
 
   <div class="cols" id="mainCols">

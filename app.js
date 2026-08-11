@@ -203,9 +203,31 @@ function hueColor(t) {
   return rgbToHex(c1.r + (c2.r - c1.r) * frac, c1.g + (c2.g - c1.g) * frac, c1.b + (c2.b - c1.b) * frac);
 }
 
+// Compact display for the budget circles: no decimals, no currency symbol —
+// a headline figure, not a precise one. formatMoney (with currency + decimals
+// where they matter) is still used everywhere else.
+function formatCompact(minor, currency) {
+  const locale = CURRENCY_LOCALE[currency] || "en-US";
+  return new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(Math.round(minor / 100));
+}
+
+function setRingPct(arcId, r, pct) {
+  const arc = document.getElementById(arcId);
+  const c = 2 * Math.PI * r;
+  const clamped = Math.max(0, Math.min(100, pct));
+  arc.style.strokeDasharray = String(c);
+  arc.style.strokeDashoffset = String(c * (1 - clamped / 100));
+}
+
 function formatMoney(minor, currency) {
   const locale = CURRENCY_LOCALE[currency] || "en-US";
-  return new Intl.NumberFormat(locale, { style: "currency", currency }).format(minor / 100);
+  const isWhole = minor % 100 === 0;
+  return new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency,
+    minimumFractionDigits: isWhole ? 0 : 2,
+    maximumFractionDigits: 2,
+  }).format(minor / 100);
 }
 
 function todayStr() {
@@ -426,6 +448,12 @@ function undeleteCategory(id) {
 // ---------- quick-add ----------
 
 let quickDir = "expense";
+let quickAddCatSelect = null;
+
+function refreshQuickAddCategories() {
+  if (!quickAddCatSelect) return;
+  populateCategorySelect(quickAddCatSelect, quickDir, quickAddCatSelect.value);
+}
 
 function populateCategorySelect(select, direction, selectedId) {
   select.innerHTML = "";
@@ -451,6 +479,7 @@ function initQuickAdd() {
   }
   dirBtns.forEach((b) => b.addEventListener("click", () => setDir(b.dataset.dir)));
   setDir("expense");
+  quickAddCatSelect = catSelect;
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
@@ -657,13 +686,13 @@ function renderCategoryRail() {
   list.innerHTML = "";
   cats.forEach((c) => {
     const total = totals.get(c.id) || 0;
-    // Depletion visual for a budgeted expense category: full at zero spend,
-    // draining down as it's spent, flips to a full red bar once the budget
-    // is gone rather than shrinking to invisible (CLAUDE.md backlog #2).
+    // Fill-up visual for a budgeted expense category: empty at zero spend,
+    // filling as it's spent, pins at a full red bar once the budget is
+    // gone rather than overflowing past 100% (CLAUDE.md backlog #2).
     // Categories with no budget keep the plain proportional-to-max bar.
     const hasBudget = c.direction === "expense" && c.budgetMinor != null && c.budgetMinor > 0;
-    const over = hasBudget && total >= c.budgetMinor;
-    const pct = hasBudget ? (over ? 100 : Math.max(0, (1 - total / c.budgetMinor) * 100)) : (total / maxTotal) * 100;
+    const over = hasBudget && total > c.budgetMinor; // exactly at budget is still fine, not over
+    const pct = hasBudget ? (over ? 100 : Math.min(100, (total / c.budgetMinor) * 100)) : (total / maxTotal) * 100;
     const barColor = over ? "var(--flag)" : c.color;
     const amountText = hasBudget
       ? `${formatMoney(total, currency)} / ${formatMoney(c.budgetMinor, currency)}`
@@ -1265,20 +1294,41 @@ function renderBudgetView() {
   const totalBudget = expenseCats.reduce((sum, c) => sum + (c.budgetMinor || 0), 0);
   const hasAnyBudget = expenseCats.some((c) => c.budgetMinor != null && c.budgetMinor > 0);
 
-  document.getElementById("bcIncome").textContent = formatMoney(income, currency);
+  // Income has no target to fill against (Budget design decisions: it's a
+  // plain counter, not something budgeted). The ring is a presence
+  // indicator — full once anything's logged, ghosted with a dash before
+  // that — not a proportional fill.
+  const incomeHasData = income > 0;
+  document.getElementById("bcIncomeRing").classList.toggle("ring-empty", !incomeHasData);
+  document.getElementById("bcIncome").textContent = incomeHasData ? formatCompact(income, currency) : "—";
+  setRingPct("bcIncomeArc", 52, incomeHasData ? 100 : 0);
 
+  const expensesOver = hasAnyBudget && expenses > totalBudget;
   const expensesEl = document.getElementById("bcExpenses");
-  expensesEl.textContent = formatMoney(expenses, currency);
-  expensesEl.classList.toggle("flag", hasAnyBudget && expenses > totalBudget);
-  document.getElementById("bcExpensesSub").textContent = hasAnyBudget ? `of ${formatMoney(totalBudget, currency)} planned` : "";
+  expensesEl.textContent = formatCompact(expenses, currency);
+  expensesEl.classList.toggle("flag", expensesOver);
+  document.getElementById("bcExpensesArc").classList.toggle("flag", expensesOver);
+  setRingPct("bcExpensesArc", 52, hasAnyBudget ? (expensesOver ? 100 : (expenses / totalBudget) * 100) : 0);
+  document.getElementById("bcExpensesCap").textContent = hasAnyBudget
+    ? `Expenses · of ${formatCompact(totalBudget, currency)}`
+    : "Expenses";
 
   // Predicted net = actual income logged so far minus total planned
   // expenses — grounded in what's actually happened, not a pure plan
   // number, matching this app's whole "log reality" ethos over forecasting.
+  // Ring fill has no natural denominator either, so like income it's a
+  // presence indicator (full once there's any activity this month), with
+  // colour carrying the sign rather than the fill amount.
+  const netHasData = income > 0 || expenses > 0;
   const netEl = document.getElementById("bcNet");
-  netEl.textContent = formatMoney(net, currency);
+  document.getElementById("bcNetRing").classList.toggle("ring-empty", !netHasData);
+  netEl.textContent = netHasData ? formatCompact(net, currency) : "—";
   netEl.classList.toggle("flag", net < 0);
-  document.getElementById("bcNetSub").textContent = hasAnyBudget ? `predicted ${formatMoney(income - totalBudget, currency)}` : "";
+  document.getElementById("bcNetArc").classList.toggle("flag", net < 0);
+  setRingPct("bcNetArc", 76, netHasData ? 100 : 0);
+  document.getElementById("bcNetCap").textContent = hasAnyBudget
+    ? `Net · predicted ${incomeHasData ? formatCompact(income - totalBudget, currency) : "—"}`
+    : "Net";
 
   const list = document.getElementById("budgetCatList");
   list.innerHTML = expenseCats.length === 0 ? '<div class="register-empty">No expense categories yet.</div>' : "";
@@ -1324,6 +1374,7 @@ function renderAll() {
   renderCategoryRail();
   renderSettings();
   renderBudgetView();
+  refreshQuickAddCategories();
 }
 
 // ---------- init ----------
