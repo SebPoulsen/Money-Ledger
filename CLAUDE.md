@@ -86,6 +86,25 @@ something that contradicts a rule below, stop and say which rule.
    you claim it works" for what TEST_MODE isolates and why the suite exists
    (2026-08-03/04 — it exists specifically to catch the class of bug that
    shipped that night).
+10. **Anything touching money, totals, dates, or budgets ships with tests
+    in the same commit — not after, not as manual checks run once and
+    thrown away.** This is automatic; Sebastian does not need to ask for
+    "with tests" — a feature request in one of these areas already implies
+    it, the same way "no build step" doesn't need to be repeated per
+    request. Applies to both kinds of correctness: the *math* (does the
+    number come out right — extract a pure function and assert on it
+    directly, the way `mergeRecords` already is) and *rendering* (does the
+    right value/state actually reach the DOM — read `d`, the iframe's
+    contentDocument, already threaded through `money-ledger-selftest.html`
+    but unused for years; see "Testing before you claim it works" for why
+    that gap existed and how it's closed now). A scratch/disposable
+    verification page is fine for figuring out *whether* something works
+    during a session, exactly as before — but once it works, the assertion
+    that proved it belongs in the permanent suite before the commit, not
+    deleted with the scratch file (2026-08-11 — the Budgets feature's own
+    25 checks and three rounds of circle-redesign screenshots shipped this
+    way and left zero permanent coverage behind; see "Testing before you
+    claim it works" for the full diagnosis).
 
 ## Sync design decisions
 
@@ -295,12 +314,56 @@ display-only figure does.
 
 ## Testing before you claim it works
 
-There is an automated self-test suite for the sync/merge logic —
-`money-ledger-selftest.html`, modeled directly on Hours Ledger's own
-`hours-ledger-selftest-reference.html`. It exists specifically because
-`mergeRecords` behaving correctly in isolation was never the whole story —
-2026-08-03/04's actual bugs were in how the app *called* merge in sequence
-on one device, which only a full sync-path test could catch.
+There is an automated self-test suite — `money-ledger-selftest.html`,
+modeled directly on Hours Ledger's own `hours-ledger-selftest-reference.html`.
+It started as sync/merge-only (built 2026-08-03/04, see below) and stayed
+that way for its first ~23 tests even as the app grew well past sync —
+Budgets shipped entirely on 25 manual checks run once by hand, never kept,
+and the three rounds of circle-redesign work that followed shipped the
+same way. Backfilled 2026-08-11 to close that gap; see "Why the suite
+didn't grow" below before assuming the old framing (sync-only) still
+describes it.
+
+**Why the suite didn't grow, diagnosed 2026-08-11 — two compounding
+causes, not one:**
+1. **The harness had a real hole, not just an unused habit.** `runTests`
+   was passed `d` (the iframe's `contentDocument`) from the very first
+   commit — `this.contentDocument` was threaded into the call specifically
+   so a test could read what the app actually rendered — and then never
+   used it, not once, across all 23 original tests. There was no
+   established pattern for "assert on the DOM," and no pure functions for
+   the hook to expose for the money math either (`formatMoney`,
+   `monthTotals`-equivalent logic, `sumByCategory`-equivalent logic all
+   lived inline inside render functions, unreachable except by reading
+   rendered output — which nothing did). Writing a money or rendering test
+   meant inventing the pattern from scratch every time, so nobody did.
+2. **The file's own framing discouraged it.** It was named, scoped, and
+   described (including in this very doc) as "the sync/merge self-test
+   suite" — a title and self-description that made a five-line arithmetic
+   assertion feel like it belonged somewhere else, even though nowhere
+   else existed. Combined with cause 1, the path of least resistance for
+   verifying a new feature was always a disposable scratch HTML page
+   driving the hook once, not a permanent addition to a file that
+   described itself as being about something else.
+
+**The fix, not just more tests:** `parseAmountToMinor`, `monthTotals`, and
+`sumByCategory` were extracted from the render functions they were
+duplicated inside (`renderSummary`/`renderBudgetView` both computed
+month totals identically; `renderCategoryRail`/`renderBudgetView` both
+built the same per-category totals Map; amount-string-to-minor-units
+parsing was duplicated three ways across quick-add, edit, and the budget
+field) into named, hook-exposed, directly-testable functions — the same
+status `mergeRecords` already had. `d` finally gets used: rendering tests
+read real DOM (`.tot-bar i` width/colour, the circles' text and
+`ring-empty` class, the summary panel's figures, the edit sheet's
+pre-filled fields) after driving state through the hook and calling
+`H.renderAll()`. `setView(y, m)` was added to the hook so date-boundary
+tests don't depend on which month the suite happens to run in.
+
+`mergeRecords` behaving correctly in isolation was never the whole
+story for sync, either — 2026-08-03/04's actual bugs were in how the app
+*called* merge in sequence on one device, which only a full sync-path
+test could catch.
 
 **How to run it:** serve the folder locally (`python3 -m http.server`,
 same as the app itself — opening as `file://` hits a cross-origin error on
@@ -327,15 +390,50 @@ failing/total summary.
   delete/import/clear-month flows don't hang a headless run waiting for a
   dialog no one will click.
 
-**What it covers:** the `mergeRecords` algorithm directly (only-local,
-only-remote, both-edited, delete-vs-edit, identical/skewed/ambiguous
-timestamps, empty sides, seed-category id collisions) and full sequences
-through the real `createEntry`/`editEntry`/`deleteEntry`/`syncNow` path,
-simulating two devices in one iframe by snapshotting and restoring state
-between them. Includes a regression test for each of 2026-08-03/04's five
-bugs (silent push overwrite, silent pull overwrite, undelete, edit
-duplication, category duplication) and one longer test walking the full
-manual repro end to end.
+**What it covers (102 tests as of 2026-08-11, up from 23):**
+- **Sync/merge** (the original 23): the `mergeRecords` algorithm directly
+  (only-local, only-remote, both-edited, delete-vs-edit,
+  identical/skewed/ambiguous timestamps, empty sides, seed-category id
+  collisions) and full sequences through the real
+  `createEntry`/`editEntry`/`deleteEntry`/`syncNow` path, simulating two
+  devices in one iframe by snapshotting and restoring state between them.
+  Includes a regression test for each of 2026-08-03/04's five bugs (silent
+  push overwrite, silent pull overwrite, undelete, edit duplication,
+  category duplication) and one longer test walking the full manual repro
+  end to end.
+- **Money math:** `parseAmountToMinor` (rounding, rejection of
+  zero/negative/blank/non-numeric input, no float drift across repeated
+  parses), `formatMoney`/`formatCompact` (decimal-hiding on whole amounts,
+  no currency symbol on the compact form, rounds rather than truncates),
+  the currency setting itself, `monthTotals` (income/expense split, net,
+  a negative-net month, an all-zero month), `sumByCategory`, income-vs-
+  expense classification, and month/year boundaries — an entry dated the
+  1st, the 31st, the day before, and the day after, plus the Dec 31→Jan 1
+  year rollover, plus a direct test of `parseIso`'s local-Y-M-D
+  construction (the actual mechanism that prevents a timezone-driven
+  off-by-one-day bug — see "Why the suite didn't grow" above for why this
+  wasn't simulated across real system timezones instead: not practical to
+  do honestly without mocking `Date`/`Intl` internals, and the mechanism
+  test covers the real risk directly).
+- **Budgets:** depletion percentage, overspend rendering the real number
+  uncapped while the bar pins at 100%, a regression test for the exact-
+  budget off-by-one (2026-08-11), a category with no budget rendering
+  exactly as it did before budgets existed, the Total budgeted footer row
+  (including the all-zero case), the three circles' values, editing and
+  clearing a budget through the real input field (folding in the original
+  25 manual checks as permanent assertions), and regressions for the
+  ring-colour work (colour lives on the arc only, never the number; a
+  custom colour applies when not flagged but never overrides the
+  over-budget/negative flag).
+- **Rendering, generally:** the Summary panel's actual figures and
+  positive/negative styling, register rows' sign and colour, the edit
+  sheet opening pre-filled (amount, date, note, category — the Money
+  Ledger equivalent of Hours Ledger's "does a field open pre-filled"
+  coverage), the week header's IN/OUT totals, and the quick-add category
+  dropdown refreshing live on category create/delete without a reload
+  (2026-08-11 regression). Empty states are asserted as empty (a dash,
+  `ring-empty`) rather than as a rendered zero, for every circle that has
+  an empty state.
 
 **The standing rule, going forward, same as Hours Ledger: every bug gets a
 test that would have caught it, written before the fix, watched to fail
@@ -352,7 +450,10 @@ you actually did, not which apply in theory:
 
 - Log an expense and an income entry; confirm direction, sign, and colour
   are correct (plain ink for expense, green for income, red only when a
-  category or month goes over budget).
+  category or month goes over budget). Now also covered by the self-test
+  suite (register rows, the budget circles' colour rules) — this manual
+  pass is about how it actually looks, not just whether the right class
+  landed on the right element.
 - Reload the page and confirm entries persisted from `localStorage`.
 - Edit and delete an existing entry; confirm the change survives a reload.
 - If Drive sync is involved: connect on one browser profile, confirm the

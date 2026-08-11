@@ -349,6 +349,503 @@ async function runTests(H,d){
       catsB.length===H.SEED_CATEGORIES.length);
   })();
 
+  /* ============ money math (2026-08-11 backfill) ============
+     Everything above is sync/merge — not one of the original 23 checked
+     an amount, a total, a currency string, or a date boundary. Added after
+     Sebastian pointed out the suite hadn't grown since the night it was
+     built, while every feature since (including Budgets' 25 checks, run
+     by hand and never kept) shipped with zero permanent coverage of the
+     actual money logic. See CLAUDE.md for the fuller diagnosis of why. */
+
+  function digits(s){ return s.replace(/\D/g,""); }
+  function fireChange(el){ el.dispatchEvent(new (d.defaultView.Event)("change")); }
+  /* Chrome normalizes a hex colour to rgb(...) when .style.background is
+     read back, but leaves an unresolved var(--flag) reference untouched —
+     so comparing an element's inline colour against a raw hex string (e.g.
+     a category's `color` field) needs both sides pushed through the same
+     browser's colour serialization first. Comparing directly against
+     "var(--flag)" doesn't need this, since that string round-trips as-is. */
+  function computedBg(colorStr){
+    var probe=d.createElement("div");
+    probe.style.background=colorStr;
+    d.body.appendChild(probe);
+    var v=d.defaultView.getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return v;
+  }
+
+  /* 24. parseAmountToMinor: the one place a decimal string becomes integer
+     minor units — used by quick-add, edit, and the budget field, so this
+     is the single point of truth for "no float drift" instead of three
+     separately-trusted call sites. */
+  (function(){
+    assert("parseAmountToMinor converts a decimal string to integer minor units",
+      H.parseAmountToMinor("12.34")===1234);
+    assert("parseAmountToMinor treats a whole number as N.00",
+      H.parseAmountToMinor("50")===5000);
+    assert("parseAmountToMinor rejects zero, negative, empty, and blank input",
+      H.parseAmountToMinor("0")===null && H.parseAmountToMinor("-5")===null &&
+      H.parseAmountToMinor("")===null && H.parseAmountToMinor("   ")===null);
+    assert("parseAmountToMinor rejects non-numeric input",
+      H.parseAmountToMinor("abc")===null);
+    var total=0;
+    for(var i=0;i<10;i++) total+=H.parseAmountToMinor("0.1");
+    assert("summing ten parsed 0.10 amounts as integers gives exactly 1.00, no float drift",
+      total===100);
+  })();
+
+  /* 25. currency formatting: formatMoney (decimals hidden on whole amounts,
+     shown on fractional ones) and formatCompact (the budget circles' headline
+     figure — no decimals ever, no currency symbol). Digit-stripped so these
+     don't overfit to one locale's exact punctuation. */
+  (function(){
+    var whole=H.formatMoney(425000,"DKK"); // 4,250.00 -> decimals hidden
+    var frac=H.formatMoney(419999,"DKK"); // 4,199.99 -> decimals shown
+    assert("formatMoney hides decimals on a whole amount",
+      digits(whole)==="4250");
+    assert("formatMoney keeps decimals on a fractional amount",
+      digits(frac)==="419999");
+    assert("formatCompact drops decimals even on a fractional amount (headline figure, not a ledger figure)",
+      digits(H.formatCompact(270440,"DKK"))==="2704");
+    assert("formatCompact rounds to the nearest whole unit rather than truncating",
+      digits(H.formatCompact(270460,"DKK"))==="2705");
+    assert("formatCompact never includes a currency symbol",
+      H.formatCompact(270400,"DKK").toLowerCase().indexOf("kr")===-1);
+  })();
+
+  /* 26. currency setting itself */
+  (function(){
+    H.resetState();
+    assert("a fresh install has no currency set — first-launch prompt is required, not a silent default",
+      H.getState().settings.currency===null);
+    var s=H.getState(); s.settings.currency="USD"; H.setState(s);
+    assert("the currency setting persists on state once chosen",
+      H.getState().settings.currency==="USD");
+  })();
+
+  /* 27. monthTotals: income/expense split + net, shared by the Summary
+     panel and the Budget circles (previously computed identically twice). */
+  (function(){
+    H.resetState(); H.setView(2026,7); // August 2026
+    var s=H.getState(); var incCat=s.categories.find(function(c){return c.direction==="income";}).id;
+    var expCat=s.categories.find(function(c){return c.direction==="expense";}).id;
+    H.createEntry({date:"2026-08-05",amountMinor:500000,direction:"income",categoryId:incCat,note:""});
+    H.createEntry({date:"2026-08-10",amountMinor:120000,direction:"expense",categoryId:expCat,note:""});
+    H.createEntry({date:"2026-08-20",amountMinor:80000,direction:"expense",categoryId:expCat,note:""});
+    var t=H.monthTotals(H.entriesInMonth(2026,7));
+    assert("monthTotals sums income separately from expenses",
+      t.income===500000 && t.expenses===200000);
+    assert("monthTotals computes net as income minus expenses",
+      t.net===300000);
+  })();
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); var incCat=s.categories.find(function(c){return c.direction==="income";}).id;
+    var expCat=s.categories.find(function(c){return c.direction==="expense";}).id;
+    H.createEntry({date:"2026-08-01",amountMinor:100000,direction:"income",categoryId:incCat,note:""});
+    H.createEntry({date:"2026-08-02",amountMinor:250000,direction:"expense",categoryId:expCat,note:""});
+    var t=H.monthTotals(H.entriesInMonth(2026,7));
+    assert("monthTotals allows a negative net when expenses exceed income",
+      t.net===-150000);
+  })();
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var t=H.monthTotals(H.entriesInMonth(2026,7));
+    assert("monthTotals returns all zeros for a month with nothing logged",
+      t.income===0 && t.expenses===0 && t.net===0);
+  })();
+
+  /* 28. sumByCategory: per-category totals, shared by the category rail
+     and the Budget category list (previously built identically twice). */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var groceries="seed-groceries", rent="seed-rent";
+    H.createEntry({date:"2026-08-01",amountMinor:30000,direction:"expense",categoryId:groceries,note:""});
+    H.createEntry({date:"2026-08-05",amountMinor:15000,direction:"expense",categoryId:groceries,note:""});
+    H.createEntry({date:"2026-08-10",amountMinor:625000,direction:"expense",categoryId:rent,note:""});
+    var totals=H.sumByCategory(H.entriesInMonth(2026,7).filter(function(e){return e.direction==="expense";}));
+    assert("sumByCategory adds multiple entries in the same category together",
+      totals.get(groceries)===45000);
+    assert("sumByCategory keeps different categories' totals separate",
+      totals.get(rent)===625000);
+    assert("sumByCategory has no entry for a category nothing was logged against",
+      !totals.has("seed-dining"));
+  })();
+
+  /* 29. income vs. expense classification — named separately from the
+     monthTotals tests above because Sebastian asked for this by name as
+     its own gap, even though the mechanism is the same `direction` field. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); var incCat=s.categories.find(function(c){return c.direction==="income";}).id;
+    var expCat=s.categories.find(function(c){return c.direction==="expense";}).id;
+    H.createEntry({date:"2026-08-01",amountMinor:100000,direction:"income",categoryId:incCat,note:""});
+    H.createEntry({date:"2026-08-01",amountMinor:50000,direction:"expense",categoryId:expCat,note:""});
+    var t=H.monthTotals(H.entriesInMonth(2026,7));
+    assert("an income-direction entry counts toward income, never expenses",
+      t.income===100000);
+    assert("an expense-direction entry counts toward expenses, never income",
+      t.expenses===50000);
+  })();
+
+  /* 30. month boundaries, and what timezones do to them. parseIso builds a
+     Date from its literal Y-M-D components (never round-trips through a
+     UTC-parsed ISO string) — that's the actual mechanism that prevents the
+     classic "an entry logged the 31st shows up on the 1st of next month"
+     bug. These test that mechanism directly, plus entriesInMonth's actual
+     boundary behavior. */
+  (function(){
+    H.resetState(); H.setView(2026,7); // August 2026
+    var cat="seed-groceries";
+    H.createEntry({date:"2026-08-01",amountMinor:100,direction:"expense",categoryId:cat,note:"first"});
+    H.createEntry({date:"2026-08-31",amountMinor:100,direction:"expense",categoryId:cat,note:"last"});
+    H.createEntry({date:"2026-07-31",amountMinor:100,direction:"expense",categoryId:cat,note:"prevmonth"});
+    H.createEntry({date:"2026-09-01",amountMinor:100,direction:"expense",categoryId:cat,note:"nextmonth"});
+    var aug=H.entriesInMonth(2026,7);
+    assert("an entry dated the 1st of the month lands in that month",
+      aug.some(function(e){return e.note==="first";}));
+    assert("an entry dated the 31st of the month lands in that month, doesn't spill into the next",
+      aug.some(function(e){return e.note==="last";}));
+    assert("an entry dated the last day of the PREVIOUS month is excluded",
+      !aug.some(function(e){return e.note==="prevmonth";}));
+    assert("an entry dated the first day of the NEXT month is excluded",
+      !aug.some(function(e){return e.note==="nextmonth";}));
+    assert("exactly the two August-dated entries land in August, nothing else leaks in",
+      aug.length===2);
+  })();
+  (function(){
+    H.resetState();
+    var cat="seed-groceries";
+    H.createEntry({date:"2025-12-31",amountMinor:100,direction:"expense",categoryId:cat,note:"nye"});
+    H.createEntry({date:"2026-01-01",amountMinor:100,direction:"expense",categoryId:cat,note:"nyd"});
+    var dec=H.entriesInMonth(2025,11), jan=H.entriesInMonth(2026,0);
+    assert("Dec 31 and Jan 1 land in different years' months, not merged or dropped at the year boundary",
+      dec.length===1 && dec[0].note==="nye" && jan.length===1 && jan[0].note==="nyd");
+  })();
+  (function(){
+    var dt=H.parseIso("2026-08-31");
+    assert("parseIso builds a date from its literal Y-M-D components",
+      dt.getFullYear()===2026 && dt.getMonth()===7 && dt.getDate()===31);
+    assert("isoDate(parseIso(x)) round-trips to the same string — no timezone-driven day shift either direction",
+      H.isoDate(dt)==="2026-08-31");
+  })();
+
+  /* ============ rendering: does the right thing appear at all ============
+     Not "does it look good" — that's Sebastian's job with his eyes. Just
+     "is the correct value/state actually in the DOM." These read d (the
+     iframe's contentDocument), which has been threaded through runTests
+     since the file was first written but never once used until now —
+     that's the concrete gap: there was no established pattern for a
+     render-reading test, so nothing ever became one. */
+
+  /* 31. Summary panel figures */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var incCat=H.getState().categories.find(function(c){return c.direction==="income";}).id;
+    var expCat=H.getState().categories.find(function(c){return c.direction==="expense";}).id;
+    H.createEntry({date:"2026-08-01",amountMinor:500000,direction:"income",categoryId:incCat,note:""});
+    H.createEntry({date:"2026-08-02",amountMinor:200000,direction:"expense",categoryId:expCat,note:""});
+    H.renderAll();
+    var box=d.getElementById("summaryBox");
+    assert("the Summary panel's Income figure matches the real income total",
+      digits(box.querySelector(".summary-row.income b").textContent)==="5000");
+    assert("the Summary panel's Expenses figure matches the real expense total",
+      digits(box.querySelectorAll(".summary-row b")[1].textContent)==="2000");
+    assert("the Summary panel's Net figure matches income minus expenses",
+      digits(box.querySelector(".summary-row.net b").textContent)==="3000");
+    assert("Net renders in the plain style when positive, not the negative style",
+      !box.querySelector(".summary-row.net b").classList.contains("neg"));
+  })();
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var incCat=H.getState().categories.find(function(c){return c.direction==="income";}).id;
+    var expCat=H.getState().categories.find(function(c){return c.direction==="expense";}).id;
+    H.createEntry({date:"2026-08-01",amountMinor:100000,direction:"income",categoryId:incCat,note:""});
+    H.createEntry({date:"2026-08-02",amountMinor:300000,direction:"expense",categoryId:expCat,note:""});
+    H.renderAll();
+    assert("Net renders in the negative style once expenses exceed income",
+      d.getElementById("summaryBox").querySelector(".summary-row.net b").classList.contains("neg"));
+  })();
+
+  /* 32. register: direction, sign, colour, and edit-sheet pre-fill — the
+     Money Ledger equivalent of Hours Ledger's "does a field open pre-filled"
+     coverage, which this suite had none of until now. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var incCat=H.getState().categories.find(function(c){return c.direction==="income";}).id;
+    var expCat=H.getState().categories.find(function(c){return c.direction==="expense";}).id;
+    var inc=H.createEntry({date:"2026-08-03",amountMinor:100000,direction:"income",categoryId:incCat,note:""});
+    var exp=H.createEntry({date:"2026-08-03",amountMinor:50000,direction:"expense",categoryId:expCat,note:""});
+    H.renderAll();
+    var incAmt=d.querySelector('.entryrow[data-id="'+inc.id+'"] .amt');
+    var expAmt=d.querySelector('.entryrow[data-id="'+exp.id+'"] .amt');
+    assert("an income row renders with a + sign and the income colour class",
+      incAmt.textContent.charAt(0)==="+" && incAmt.classList.contains("income"));
+    assert("an expense row renders with a − sign and no income colour class",
+      expAmt.textContent.charAt(0)==="−" && !expAmt.classList.contains("income"));
+  })();
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var expCat=H.getState().categories.find(function(c){return c.id==="seed-groceries";}).id;
+    var entry=H.createEntry({date:"2026-08-15",amountMinor:199,direction:"expense",categoryId:expCat,note:"Snacks"});
+    H.renderAll();
+    d.querySelector('.entryrow[data-id="'+entry.id+'"]').click();
+    assert("the edit sheet's amount field opens pre-filled with the entry's amount",
+      d.getElementById("editAmount").value==="1.99");
+    assert("the edit sheet's date field opens pre-filled with the entry's date",
+      d.getElementById("editDate").value==="2026-08-15");
+    assert("the edit sheet's note field opens pre-filled with the entry's note",
+      d.getElementById("editNote").value==="Snacks");
+    assert("the edit sheet's category select opens pre-filled with the entry's category",
+      d.getElementById("editCategory").value===expCat);
+  })();
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var incCat=H.getState().categories.find(function(c){return c.direction==="income";}).id;
+    var expCat=H.getState().categories.find(function(c){return c.direction==="expense";}).id;
+    H.createEntry({date:"2026-08-03",amountMinor:100000,direction:"income",categoryId:incCat,note:""});
+    H.createEntry({date:"2026-08-03",amountMinor:50000,direction:"expense",categoryId:expCat,note:""});
+    H.renderAll();
+    var head=d.querySelector(".weekhead span").textContent.split("·");
+    assert("the register's week header shows the right IN total for that week",
+      digits(head[0])==="1000");
+    assert("the register's week header shows the right OUT total for that week",
+      digits(head[1])==="500");
+  })();
+
+  /* 33. category rail: no-budget category renders exactly as it did before
+     budgets existed, plain proportional bar, own colour, no "/ budget" text */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var cat=H.getState().categories.find(function(c){return c.id==="seed-groceries";});
+    H.createEntry({date:"2026-08-01",amountMinor:42500,direction:"expense",categoryId:cat.id,note:""});
+    H.renderAll();
+    var row=d.querySelector('.cat[data-id="'+cat.id+'"]');
+    var amtSpan=row.querySelector("div > div > span");
+    assert("a category with no budget shows a plain spent total, no '/ budget' suffix",
+      amtSpan.textContent.indexOf("/")===-1);
+    var bg=d.defaultView.getComputedStyle(row.querySelector(".tot-bar i")).backgroundColor;
+    assert("a category with no budget's bar uses its own category colour, not flag red",
+      bg===computedBg(cat.color));
+  })();
+
+  /* 34. category rail: depletion percentage (budget vs. spent) */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var cat=H.getState().categories.find(function(c){return c.id==="seed-groceries";});
+    H.editCategory(cat.id,{budgetMinor:400000}); // 4000 budget
+    H.createEntry({date:"2026-08-01",amountMinor:100000,direction:"expense",categoryId:cat.id,note:""}); // 1000 spent = 25%
+    H.renderAll();
+    var row=d.querySelector('.cat[data-id="'+cat.id+'"]');
+    var pct=parseFloat(row.querySelector(".tot-bar i").style.width);
+    assert("a budgeted category's bar fills to spent/budget as a percentage",
+      Math.abs(pct-25)<0.01);
+    assert("a budgeted category's amount text shows spent / budget",
+      row.querySelector("div > div > span").textContent.indexOf("/")!==-1);
+  })();
+
+  /* 35. category rail: overspend renders the real number uncapped, bar
+     capped at 100%, flag red */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var cat=H.getState().categories.find(function(c){return c.id==="seed-groceries";});
+    H.editCategory(cat.id,{budgetMinor:400000}); // 4000 budget
+    H.createEntry({date:"2026-08-01",amountMinor:600000,direction:"expense",categoryId:cat.id,note:""}); // 6000 spent = 150%
+    H.renderAll();
+    var row=d.querySelector('.cat[data-id="'+cat.id+'"]');
+    var bar=row.querySelector(".tot-bar i");
+    assert("an overspent category's bar pins at 100% width, not 150%",
+      parseFloat(bar.style.width)===100);
+    assert("an overspent category's bar turns flag red",
+      bar.style.background==="var(--flag)");
+    assert("an overspent category's number stays honest and uncapped (6000, not clamped to the 4000 budget)",
+      digits(row.querySelector("div > div > span").textContent).indexOf("6000")!==-1);
+  })();
+
+  /* 36. REGRESSION off-by-one: spending exactly the budgeted amount must
+     stay normal, not flag (2026-08-11) */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var cat=H.getState().categories.find(function(c){return c.id==="seed-rent";});
+    H.editCategory(cat.id,{budgetMinor:625000}); // 6250 budget
+    H.createEntry({date:"2026-08-01",amountMinor:625000,direction:"expense",categoryId:cat.id,note:""}); // spent exactly 6250
+    H.renderAll();
+    var bar=d.querySelector('.cat[data-id="'+cat.id+'"] .tot-bar i');
+    var bg=d.defaultView.getComputedStyle(bar).backgroundColor;
+    assert("REGRESSION spending exactly the budgeted amount does not flag red",
+      bg===computedBg(cat.color));
+    assert("spending exactly the budget fills the bar to exactly 100%, not treated as over",
+      parseFloat(bar.style.width)===100);
+  })();
+
+  /* 37. Total budgeted footer row */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.editCategory("seed-groceries",{budgetMinor:400000});
+    H.editCategory("seed-rent",{budgetMinor:625000});
+    H.renderAll();
+    var totalRow=d.getElementById("budgetCatList").querySelector(".bcat-totalrow");
+    assert("the category-budget list shows a Total budgeted footer row",
+      !!totalRow);
+    assert("the Total budgeted row sums every expense category's budget (4000+6250)",
+      digits(totalRow.querySelector(".bcat-totalamt").textContent)==="10250");
+  })();
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.renderAll();
+    var totalRow=d.getElementById("budgetCatList").querySelector(".bcat-totalrow");
+    assert("with no budgets set anywhere, the Total budgeted row reads a real zero, not blank",
+      digits(totalRow.querySelector(".bcat-totalamt").textContent)==="0");
+  })();
+
+  /* 38. the three circles' values */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var incCat=H.getState().categories.find(function(c){return c.direction==="income";}).id;
+    H.createEntry({date:"2026-08-01",amountMinor:2850000,direction:"income",categoryId:incCat,note:""});
+    H.createEntry({date:"2026-08-02",amountMinor:425000,direction:"expense",categoryId:"seed-groceries",note:""});
+    H.renderAll();
+    assert("the Income circle shows the real income total, compact-formatted",
+      digits(d.getElementById("bcIncome").textContent)==="28500");
+    assert("the Expenses circle shows the real expense total",
+      digits(d.getElementById("bcExpenses").textContent)==="4250");
+    assert("the Net circle shows income minus expenses",
+      digits(d.getElementById("bcNet").textContent)==="24250");
+  })();
+
+  /* 39. empty states render as empty, not as a logged zero */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.createEntry({date:"2026-08-01",amountMinor:150000,direction:"expense",categoryId:"seed-groceries",note:""}); // spent, no income
+    H.renderAll();
+    assert("with zero income, the Income ring reads as a dash, not a logged zero",
+      d.getElementById("bcIncome").textContent==="—");
+    assert("with zero income, the Income ring is visually ghosted",
+      d.getElementById("bcIncomeRing").classList.contains("ring-empty"));
+    assert("with real expenses logged, Net has activity to show and is not ghosted",
+      !d.getElementById("bcNetRing").classList.contains("ring-empty"));
+    assert("the Expenses circle is never ghosted this way — a known spent amount is real data",
+      !d.getElementById("bcExpensesRing").classList.contains("ring-empty"));
+    assert("with real expenses logged, the Expenses circle shows the true number, not a dash",
+      d.getElementById("bcExpenses").textContent!=="—");
+  })();
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.renderAll(); // truly nothing logged this month
+    assert("with nothing logged at all, Income reads as a dash",
+      d.getElementById("bcIncome").textContent==="—");
+    assert("with nothing logged at all, Net also reads as a dash and is ghosted, not shown as 0",
+      d.getElementById("bcNet").textContent==="—" && d.getElementById("bcNetRing").classList.contains("ring-empty"));
+    assert("with nothing logged, Expenses reads as a real, known zero — not ghosted, not dashed",
+      d.getElementById("bcExpenses").textContent!=="—");
+  })();
+
+  /* 40. REGRESSION colour lives on the arc only, never the number
+     (2026-08-11) */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.editCategory("seed-groceries",{budgetMinor:100000});
+    H.createEntry({date:"2026-08-01",amountMinor:500000,direction:"expense",categoryId:"seed-groceries",note:""}); // way over
+    H.renderAll();
+    assert("REGRESSION an over-budget Expenses arc turns flag red",
+      d.getElementById("bcExpensesArc").classList.contains("flag"));
+    assert("REGRESSION the Expenses NUMBER stays plain ink even when over budget — colour lives on the arc only",
+      !d.getElementById("bcExpenses").classList.contains("flag") && d.getElementById("bcExpenses").style.color==="");
+  })();
+
+  /* 41. REGRESSION custom ring colour applies to the arc when not flagged,
+     but never overrides the over-budget/negative flag (2026-08-11) */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK";
+    s.settings.budgetRingColors={income:{hue:0.33,color:"#4E7040"},net:null,expenses:null};
+    H.setState(s);
+    H.createEntry({date:"2026-08-01",amountMinor:100000,direction:"income",categoryId:"seed-salary",note:""});
+    H.renderAll();
+    assert("a custom ring colour applies to the arc when the ring isn't flagged",
+      d.getElementById("bcIncomeArc").style.stroke!=="");
+    assert("a custom ring colour never touches the number — it stays plain ink",
+      d.getElementById("bcIncome").style.color==="");
+  })();
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK";
+    s.settings.budgetRingColors={income:null,net:null,expenses:{hue:0.33,color:"#4E7040"}};
+    H.setState(s);
+    H.editCategory("seed-groceries",{budgetMinor:100000});
+    H.createEntry({date:"2026-08-01",amountMinor:500000,direction:"expense",categoryId:"seed-groceries",note:""}); // over budget
+    H.renderAll();
+    var arc=d.getElementById("bcExpensesArc");
+    assert("REGRESSION a custom ring colour never overrides the over-budget flag — the flag class wins",
+      arc.classList.contains("flag"));
+    assert("REGRESSION when flagged, the inline custom colour is cleared so the CSS flag-red rule actually applies",
+      arc.style.stroke==="");
+  })();
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.createEntry({date:"2026-08-01",amountMinor:100000,direction:"income",categoryId:"seed-salary",note:""});
+    H.renderAll();
+    assert("with no custom colour set and not flagged, the arc has no inline colour override (plain default ink)",
+      d.getElementById("bcIncomeArc").style.stroke==="");
+  })();
+
+  /* 42. REGRESSION quick-add category dropdown refreshes live on category
+     create/delete, without a reload (2026-08-11) */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.renderAll();
+    var opts=function(){ return Array.from(d.getElementById("qaCategory").options).map(function(o){return o.textContent;}); };
+    assert("the quick-add category dropdown starts populated with expense categories",
+      opts().indexOf("Groceries")!==-1);
+    H.createCategory({name:"Pet supplies",direction:"expense",hue:0.5});
+    H.renderAll();
+    assert("REGRESSION adding a category refreshes the quick-add dropdown without a reload",
+      opts().indexOf("Pet supplies")!==-1);
+    H.deleteCategory("seed-groceries");
+    H.renderAll();
+    assert("REGRESSION deleting a category refreshes the quick-add dropdown without a reload",
+      opts().indexOf("Groceries")===-1);
+  })();
+
+  /* 43. editing and clearing a budget through the actual input field —
+     folds in the Budgets feature's original 25 manual checks (run by hand,
+     never kept) as real, permanent assertions. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.renderAll();
+    var row=function(){ return d.querySelector('#budgetCatList .bcatrow[data-id="seed-groceries"] .bcat-budget'); };
+    assert("a category with no budget shows an empty budget input, not a stray 0",
+      row().value==="");
+    row().value="4000";
+    fireChange(row());
+    assert("committing a typed budget amount sets the category's budgetMinor",
+      H.getState().categories.find(function(c){return c.id==="seed-groceries";}).budgetMinor===400000);
+    assert("after setting a budget, the input re-renders pre-filled with that value",
+      row().value==="4000.00");
+    row().value="";
+    fireChange(row());
+    assert("clearing the budget input removes the category's budget (back to null)",
+      H.getState().categories.find(function(c){return c.id==="seed-groceries";}).budgetMinor===null);
+  })();
+
   return results;
 }
 })();

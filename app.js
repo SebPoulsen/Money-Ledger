@@ -245,6 +245,36 @@ function applyRingColor(key, isBad) {
   arcEl.style.stroke = !isBad && custom ? custom.color : "";
 }
 
+// Parses a decimal amount string (from an <input type=number> field) into
+// integer minor units in one place — every caller rounds through this same
+// single Math.round(), so float drift can't creep in differently at three
+// separate call sites. Returns null for empty/invalid/non-positive input;
+// callers decide what null means for them (bail out of a submit, or "no
+// budget set" for the budget field).
+function parseAmountToMinor(str) {
+  const val = parseFloat(str);
+  if (!str || !str.trim() || isNaN(val) || val <= 0) return null;
+  return Math.round(val * 100);
+}
+
+// Income/expense split + net for a set of entries — shared by the Summary
+// panel and the Budget circles, which previously computed this identically
+// in two places.
+function monthTotals(entries) {
+  let income = 0, expenses = 0;
+  entries.forEach((e) => (e.direction === "income" ? (income += e.amountMinor) : (expenses += e.amountMinor)));
+  return { income, expenses, net: income - expenses };
+}
+
+// Sums amountMinor per categoryId for a set of entries (caller filters by
+// direction first) — shared by the category rail and the Budget category
+// list, which previously built this same Map identically in two places.
+function sumByCategory(entries) {
+  const totals = new Map();
+  entries.forEach((e) => totals.set(e.categoryId, (totals.get(e.categoryId) || 0) + e.amountMinor));
+  return totals;
+}
+
 function formatMoney(minor, currency) {
   const locale = CURRENCY_LOCALE[currency] || "en-US";
   const isWhole = minor % 100 === 0;
@@ -509,11 +539,11 @@ function initQuickAdd() {
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
-    const amountVal = parseFloat(document.getElementById("qaAmount").value);
-    if (!amountVal || amountVal <= 0) return;
+    const amountMinor = parseAmountToMinor(document.getElementById("qaAmount").value);
+    if (amountMinor == null) return;
     createEntry({
       date: dateInput.value || todayStr(),
-      amountMinor: Math.round(amountVal * 100),
+      amountMinor,
       direction: quickDir,
       categoryId: catSelect.value,
       note: document.getElementById("qaNote").value.trim(),
@@ -562,11 +592,11 @@ function initEditSheet() {
     e.preventDefault();
     if (!state.entries.some((x) => x.id === editingId)) return;
     const dir = scrim.querySelector('.dirtoggle button[aria-pressed="true"]').dataset.dir;
-    const amountVal = parseFloat(document.getElementById("editAmount").value);
-    if (!amountVal || amountVal <= 0) return;
+    const amountMinor = parseAmountToMinor(document.getElementById("editAmount").value);
+    if (amountMinor == null) return;
     editEntry(editingId, {
       direction: dir,
-      amountMinor: Math.round(amountVal * 100),
+      amountMinor,
       categoryId: document.getElementById("editCategory").value,
       date: document.getElementById("editDate").value,
       note: document.getElementById("editNote").value.trim(),
@@ -679,16 +709,14 @@ function escapeHtml(s) {
 
 function renderSummary() {
   const entries = entriesInMonth(viewYear, viewMonth);
-  let inc = 0, exp = 0;
-  entries.forEach((e) => (e.direction === "income" ? (inc += e.amountMinor) : (exp += e.amountMinor)));
-  const net = inc - exp;
+  const { income, expenses, net } = monthTotals(entries);
   const currency = state.settings.currency;
-  const pct = inc > 0 ? Math.min(100, (exp / inc) * 100) : exp > 0 ? 100 : 0;
-  const over = inc > 0 && exp > inc;
+  const pct = income > 0 ? Math.min(100, (expenses / income) * 100) : expenses > 0 ? 100 : 0;
+  const over = income > 0 && expenses > income;
 
   document.getElementById("summaryBox").innerHTML = `
-    <div class="summary-row income"><span>Income</span><b>${formatMoney(inc, currency)}</b></div>
-    <div class="summary-row"><span>Expenses</span><b>${formatMoney(exp, currency)}</b></div>
+    <div class="summary-row income"><span>Income</span><b>${formatMoney(income, currency)}</b></div>
+    <div class="summary-row"><span>Expenses</span><b>${formatMoney(expenses, currency)}</b></div>
     <div class="summary-row net"><span>Net</span><b class="${net < 0 ? "neg" : ""}">${formatMoney(net, currency)}</b></div>
     <div class="summary-bar"><i class="${over ? "over" : "spent"}" style="width:${pct}%"></i></div>
   `;
@@ -702,8 +730,7 @@ function renderCategoryRail() {
   });
 
   const entries = entriesInMonth(viewYear, viewMonth).filter((e) => e.direction === railDir);
-  const totals = new Map();
-  entries.forEach((e) => totals.set(e.categoryId, (totals.get(e.categoryId) || 0) + e.amountMinor));
+  const totals = sumByCategory(entries);
   const cats = categoriesFor(railDir).slice().sort((a, b) => (totals.get(b.id) || 0) - (totals.get(a.id) || 0));
   const maxTotal = Math.max(1, ...cats.map((c) => totals.get(c.id) || 0));
   const currency = state.settings.currency;
@@ -1310,13 +1337,10 @@ function renderBudgetView() {
   document.getElementById("budgetMonthLabel").textContent = monthLabel(viewYear, viewMonth);
   const currency = state.settings.currency;
   const entries = entriesInMonth(viewYear, viewMonth);
-  let income = 0, expenses = 0;
-  entries.forEach((e) => (e.direction === "income" ? (income += e.amountMinor) : (expenses += e.amountMinor)));
-  const net = income - expenses;
+  const { income, expenses, net } = monthTotals(entries);
 
   const expenseCats = categoriesFor("expense");
-  const totals = new Map();
-  entries.filter((e) => e.direction === "expense").forEach((e) => totals.set(e.categoryId, (totals.get(e.categoryId) || 0) + e.amountMinor));
+  const totals = sumByCategory(entries.filter((e) => e.direction === "expense"));
   const totalBudget = expenseCats.reduce((sum, c) => sum + (c.budgetMinor || 0), 0);
   const hasAnyBudget = expenseCats.some((c) => c.budgetMinor != null && c.budgetMinor > 0);
 
@@ -1378,8 +1402,7 @@ function renderBudgetView() {
     `;
     list.appendChild(row);
     row.querySelector(".bcat-budget").addEventListener("change", (e) => {
-      const val = parseFloat(e.target.value);
-      const budgetMinor = !e.target.value.trim() || isNaN(val) || val <= 0 ? null : Math.round(val * 100);
+      const budgetMinor = parseAmountToMinor(e.target.value);
       editCategory(c.id, { budgetMinor });
       saveState();
       renderAll();
@@ -1519,6 +1542,18 @@ function exposeTestHook() {
     uid, nowIso, todayStr, isoDate, parseIso,
     entriesInMonth, categoriesFor, catById,
     SEED_CATEGORIES,
+
+    formatMoney, formatCompact, parseAmountToMinor, monthTotals, sumByCategory,
+
+    // Deterministic control over "which month is currently displayed" — the
+    // real app defaults this to the real today's month at load, which is
+    // fine for sync tests (they never read rendered output) but wrong for
+    // anything that reads the DOM: a test dated "the 1st of the month"
+    // needs to control which month that IS, not depend on whenever the
+    // suite happens to run.
+    getViewMonth: () => viewMonth,
+    getViewYear: () => viewYear,
+    setView: (y, m) => { viewYear = y; viewMonth = m; renderAll(); },
   };
 }
 
