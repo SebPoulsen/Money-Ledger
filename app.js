@@ -1648,6 +1648,8 @@ function initBudgetView() {
 let recurringDir = "expense";
 
 function renderRecurringView() {
+  const currency = state.settings.currency;
+
   document.querySelectorAll("#recurringDirToggle button").forEach((b) => {
     b.setAttribute("aria-pressed", String(b.dataset.dir === recurringDir));
   });
@@ -1655,62 +1657,93 @@ function renderRecurringView() {
   const addCatSelect = document.getElementById("newRecCategory");
   populateCategorySelect(addCatSelect, recurringDir, addCatSelect.value);
 
-  const list = document.getElementById("recurringList");
-  const items = state.recurring.filter((r) => !r.deleted && r.direction === recurringDir);
-  list.innerHTML = items.length === 0
-    ? `<div class="register-empty">No recurring ${recurringDir === "income" ? "income" : "expenses"} yet.</div>`
-    : "";
-  items.forEach((r) => {
-    const cat = catById(r.categoryId);
-    const row = document.createElement("div");
-    row.className = "recrow";
-    row.dataset.id = r.id;
-    row.innerHTML = `
-      <span class="dot" style="background:${cat ? cat.color : "var(--none)"}"></span>
-      <input class="rec-name" value="${escapeHtml(r.name)}">
-      <input type="number" class="rec-amount" inputmode="decimal" step="1" min="0" value="${(r.amountMinor / 100).toFixed(2)}">
-      <select class="rec-category"></select>
-      <span class="rec-daywrap">Day <select class="rec-day"></select></span>
-      <button type="button" class="del" title="Delete recurring item">×</button>
-    `;
-    list.appendChild(row);
-    populateCategorySelect(row.querySelector(".rec-category"), r.direction, r.categoryId);
-    populateDaySelect(row.querySelector(".rec-day"), r.dayOfMonth);
+  // Totals always show both directions regardless of which side the
+  // toggle is on — a plain sum of everything declared, not scoped to the
+  // currently-viewed list (Recurring design decisions).
+  const live = state.recurring.filter((r) => !r.deleted);
+  const totalIncome = live.filter((r) => r.direction === "income").reduce((s, r) => s + r.amountMinor, 0);
+  const totalExpenses = live.filter((r) => r.direction === "expense").reduce((s, r) => s + r.amountMinor, 0);
+  document.getElementById("recurringSummaryBox").innerHTML = `
+    <div class="summary-row income"><span>Recurring income</span><b>${formatMoney(totalIncome, currency)}</b></div>
+    <div class="summary-row"><span>Recurring expenses</span><b>${formatMoney(totalExpenses, currency)}</b></div>
+  `;
 
-    row.querySelector(".rec-name").addEventListener("change", (e) => {
-      const v = e.target.value.trim();
-      editRecurring(r.id, { name: v || r.name });
-      saveState();
-      renderAll();
-    });
-    row.querySelector(".rec-amount").addEventListener("change", (e) => {
-      const minor = parseAmountToMinor(e.target.value);
-      if (minor == null) { e.target.value = (r.amountMinor / 100).toFixed(2); return; }
-      editRecurring(r.id, { amountMinor: minor });
-      saveState();
-      renderAll();
-    });
-    row.querySelector(".rec-category").addEventListener("change", (e) => {
-      editRecurring(r.id, { categoryId: e.target.value });
-      saveState();
-      renderAll();
-    });
-    row.querySelector(".rec-day").addEventListener("change", (e) => {
-      const day = Math.round(Number(e.target.value));
-      if (!day || day < 1 || day > 31) { e.target.value = r.dayOfMonth; return; }
-      editRecurring(r.id, { dayOfMonth: day });
-      saveState();
-      renderAll();
-    });
-    row.querySelector(".del").addEventListener("click", () => {
-      deleteRecurring(r.id);
-      saveState();
-      toast(`"${r.name}" removed from Recurring`, () => {
-        undeleteRecurring(r.id);
+  const list = document.getElementById("recurringList");
+  const items = live.filter((r) => r.direction === recurringDir);
+  if (items.length === 0) {
+    list.innerHTML = `<div class="register-empty">No recurring ${recurringDir === "income" ? "income" : "expenses"} yet.</div>`;
+    return;
+  }
+  list.innerHTML = "";
+
+  // Grouped by day-of-month, same rhythm as the register grouping entries
+  // by day — a day header (reusing .dayhead) with that day's total, then
+  // the items themselves.
+  const byDay = new Map();
+  items.forEach((r) => {
+    if (!byDay.has(r.dayOfMonth)) byDay.set(r.dayOfMonth, []);
+    byDay.get(r.dayOfMonth).push(r);
+  });
+  Array.from(byDay.keys()).sort((a, b) => a - b).forEach((day) => {
+    const rows = byDay.get(day);
+    const dayTotal = rows.reduce((s, r) => s + r.amountMinor, 0);
+    const head = document.createElement("div");
+    head.className = "dayhead";
+    head.innerHTML = `<b>${ordinal(day).toUpperCase()}</b><span>${formatMoney(dayTotal, currency)}</span>`;
+    list.appendChild(head);
+
+    rows.forEach((r) => {
+      const cat = catById(r.categoryId);
+      const row = document.createElement("div");
+      row.className = "recrow";
+      row.dataset.id = r.id;
+      row.innerHTML = `
+        <span class="dot" style="background:${cat ? cat.color : "var(--none)"}"></span>
+        <input class="rec-name" value="${escapeHtml(r.name)}">
+        <input type="number" class="rec-amount" inputmode="decimal" step="1" min="0" value="${(r.amountMinor / 100).toFixed(2)}">
+        <select class="rec-category"></select>
+        <span class="rec-daywrap">Day <select class="rec-day"></select></span>
+        <button type="button" class="del" title="Delete recurring item">×</button>
+      `;
+      list.appendChild(row);
+      populateCategorySelect(row.querySelector(".rec-category"), r.direction, r.categoryId);
+      populateDaySelect(row.querySelector(".rec-day"), r.dayOfMonth);
+
+      row.querySelector(".rec-name").addEventListener("change", (e) => {
+        const v = e.target.value.trim();
+        editRecurring(r.id, { name: v || r.name });
         saveState();
         renderAll();
       });
-      renderAll();
+      row.querySelector(".rec-amount").addEventListener("change", (e) => {
+        const minor = parseAmountToMinor(e.target.value);
+        if (minor == null) { e.target.value = (r.amountMinor / 100).toFixed(2); return; }
+        editRecurring(r.id, { amountMinor: minor });
+        saveState();
+        renderAll();
+      });
+      row.querySelector(".rec-category").addEventListener("change", (e) => {
+        editRecurring(r.id, { categoryId: e.target.value });
+        saveState();
+        renderAll();
+      });
+      row.querySelector(".rec-day").addEventListener("change", (e) => {
+        const newDay = Math.round(Number(e.target.value));
+        if (!newDay || newDay < 1 || newDay > 31) { e.target.value = r.dayOfMonth; return; }
+        editRecurring(r.id, { dayOfMonth: newDay });
+        saveState();
+        renderAll();
+      });
+      row.querySelector(".del").addEventListener("click", () => {
+        deleteRecurring(r.id);
+        saveState();
+        toast(`"${r.name}" removed from Recurring`, () => {
+          undeleteRecurring(r.id);
+          saveState();
+          renderAll();
+        });
+        renderAll();
+      });
     });
   });
 }

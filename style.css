@@ -57,6 +57,8 @@ button{cursor:pointer}
 .qa-submitwrap{width:130px}
 .qa-submit{flex:none;width:100%;height:38px;padding:0}
 .qa-chips{margin-top:10px}
+.qa-name{flex:1;min-width:160px}
+.qa-day{width:110px}
 
 /* category dot/chip/color-picker system — carried over as-is from Hours Ledger */
 .chips{display:flex;flex-wrap:wrap;gap:5px}
@@ -131,11 +133,12 @@ button{cursor:pointer}
   .bcatrow .bcat-spent{order:3;width:100%;padding-left:21px}
 }
 
-/* recurring — backlog #3, same bones as the budget category list */
+/* recurring — backlog #3. Add form reuses .quickadd/.qa-field so it reads
+   as the same "logging bar" as the front page's own quick-add; the list
+   reuses .register/.dayhead so recurring items grouped by day read as the
+   same rhythm as entries grouped by day in the real register. */
 .recurringview{margin-top:18px}
-.recurring-togglerow{display:flex;justify-content:flex-end;margin-bottom:12px}
-.recurringlist{border:1px solid var(--ink);margin-bottom:22px}
-.recrow{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--rule-soft)}
+.recrow{display:flex;align-items:center;gap:8px;padding:9px 12px 9px 22px;border-bottom:1px solid var(--rule-soft)}
 .recrow:last-child{border-bottom:0}
 .recrow .dot{width:11px;height:11px;flex:none;border:1px solid rgba(0,0,0,.3)}
 .recrow input.rec-name{flex:1;min-width:0;font-size:13px;background:transparent;border:0;padding:2px 0}
@@ -146,11 +149,6 @@ button{cursor:pointer}
 .recrow select.rec-day{width:64px;flex:none;font-family:var(--mono);text-align:center;border:1px solid var(--rule);background:var(--paper);padding:7px 4px;font-size:13px;border-radius:0}
 .recrow .del{border:0;background:transparent;color:var(--muted);font-size:16px;line-height:1;padding:0 2px;flex:none}
 .recrow .del:hover{color:var(--flag)}
-.addrecurring{display:flex;gap:6px;flex-wrap:wrap}
-.addrecurring input[type=text]{flex:2;min-width:140px;border:1px solid var(--rule);background:transparent;padding:7px 8px;font-size:13px;border-radius:0}
-.addrecurring input[type=number]{width:90px;border:1px solid var(--rule);background:transparent;padding:7px 8px;font-size:13px;border-radius:0}
-.addrecurring select{flex:1;min-width:110px;border:1px solid var(--rule);background:var(--paper);padding:7px 8px;font-size:13px;border-radius:0}
-.addrecurring select#newRecDay{flex:none;width:80px;min-width:0}
 @media(max-width:700px){
   .recrow{flex-wrap:wrap}
   .recrow input.rec-name{width:100%;order:1}

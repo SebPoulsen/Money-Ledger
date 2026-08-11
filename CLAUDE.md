@@ -393,6 +393,27 @@ same `mergeRecords` algorithm, keyed by `RECURRING_CONTENT_FIELDS`
 generic over "a collection of tombstoned records," proven by Entry and
 Category both already using it.
 
+**The Recurring screen reuses the register's actual components, not just
+its "feel" (2026-08-11, revised same day).** First build was a standalone
+layout: toggle above a flat list, "Add recurring" form below the list in
+a bespoke `.addrecurring` box. Reworked after Sebastian asked for it to
+read as the same screen family as the front page specifically: the add
+form now literally reuses `.quickadd`/`.qa-field` — the same striped
+green box, the same labeled-field layout, direction toggle included as a
+`.qa-type` field exactly like quick-add's own — moved *above* the list to
+match quick-add sitting above the register. The list reuses `.register`
+and `.dayhead` directly: recurring items group by day-of-month under a
+day header showing that day's total, the same rhythm as the register
+grouping entries by day. A `.summary`-styled box (reusing that component
+too) shows total recurring income and total recurring expenses — both
+figures always, regardless of which side the Spent/Income toggle is on,
+since the ask was "a total of recurring income and expenses somewhere,"
+not a per-view number. Deliberately did **not** merge the Spent/Income
+toggle away even though the register itself doesn't split by direction —
+that's a separate, already-settled decision (see the "one screen, split
+by toggle" entry above); borrowing the register's visual/interaction
+patterns doesn't mean re-litigating what those patterns are applied to.
+
 ## Testing before you claim it works
 
 There is an automated self-test suite — `money-ledger-selftest.html`,

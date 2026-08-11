@@ -130,22 +130,42 @@
       <button type="button" id="recurringBack" class="ghost">← Back to register</button>
     </div>
 
-    <div class="recurring-togglerow">
-      <span id="recurringDirToggle" class="dirtoggle">
-        <button type="button" data-dir="expense" aria-pressed="true">Spent</button>
-        <button type="button" data-dir="income" aria-pressed="false">Income</button>
-      </span>
-    </div>
-    <div id="recurringList" class="recurringlist"></div>
+    <div class="summary" id="recurringSummaryBox"></div>
 
-    <div class="panel-label"><span>Add recurring</span></div>
-    <form id="addRecurringForm" class="addrecurring">
-      <input type="text" id="newRecName" placeholder="Name (e.g. Spotify, Salary)">
-      <input type="number" id="newRecAmount" inputmode="decimal" step="1" min="0" placeholder="0.00">
-      <select id="newRecCategory"></select>
-      <select id="newRecDay"></select>
-      <button type="submit" class="ghost">Add</button>
-    </form>
+    <section class="quickadd">
+      <form id="addRecurringForm" class="quickadd-row" novalidate>
+        <div class="qa-field qa-type">
+          <label>Type</label>
+          <div class="dirtoggle" id="recurringDirToggle">
+            <button type="button" data-dir="expense" aria-pressed="true">Spent</button>
+            <button type="button" data-dir="income" aria-pressed="false">Income</button>
+          </div>
+        </div>
+        <div class="qa-field qa-name">
+          <label for="newRecName">Name</label>
+          <input type="text" id="newRecName" placeholder="e.g. Spotify, Salary">
+        </div>
+        <div class="qa-field qa-amount">
+          <label for="newRecAmount">Amount</label>
+          <input type="number" id="newRecAmount" inputmode="decimal" step="1" min="0" placeholder="0.00">
+        </div>
+        <div class="qa-field qa-cat">
+          <label for="newRecCategory">Category</label>
+          <select id="newRecCategory"></select>
+        </div>
+        <div class="qa-field qa-day">
+          <label for="newRecDay">Day</label>
+          <select id="newRecDay"></select>
+        </div>
+        <div class="qa-field qa-submitwrap">
+          <label>&nbsp;</label>
+          <button type="submit" class="solid qa-submit">Add</button>
+        </div>
+      </form>
+    </section>
+
+    <div class="panel-label"><span>Recurring items</span></div>
+    <div id="recurringList" class="register"></div>
     <div class="hint">Auto-inserted as a real entry into the register on its day each month — editing or deleting a recurring item never changes entries already logged from it.</div>
   </section>
 
