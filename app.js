@@ -1354,8 +1354,16 @@ function renderBudgetView() {
   setRingPct("bcIncomeArc", 52, incomeHasData ? 100 : 0);
   applyRingColor("income", false);
 
+  // Same presence-indicator treatment as Income (above): a solid "0" is
+  // just as ambiguous here as it is there ("deliberately spent nothing"
+  // vs. "haven't opened the app"), so Expenses ghosts on its own zero the
+  // same way Income does, rather than always showing a real number
+  // (2026-08-11 revision — the earlier version only ghosted for "nothing
+  // logged at all" on Income/Net, leaving Expenses inconsistent).
+  const expensesHasData = expenses > 0;
   const expensesOver = hasAnyBudget && expenses > totalBudget;
-  document.getElementById("bcExpenses").textContent = formatCompact(expenses, currency);
+  document.getElementById("bcExpensesRing").classList.toggle("ring-empty", !expensesHasData);
+  document.getElementById("bcExpenses").textContent = expensesHasData ? formatCompact(expenses, currency) : "—";
   setRingPct("bcExpensesArc", 52, hasAnyBudget ? (expensesOver ? 100 : (expenses / totalBudget) * 100) : 0);
   applyRingColor("expenses", expensesOver);
   document.getElementById("bcExpensesCapSub").textContent = hasAnyBudget

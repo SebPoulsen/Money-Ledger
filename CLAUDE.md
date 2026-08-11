@@ -229,14 +229,26 @@ for space inside it.
   against. Both rings are therefore a presence indicator, not a
   proportional gauge: full ring once there's any relevant activity this
   month, ghosted (dimmed, dashed "—" instead of a number) before that.
-  Income ghosts when nothing's been logged; Net ghosts when there's been
-  no income *and* no expenses at all. This is an interpretation of "fills
-  as income lands" from the original request, not a literal spec — worth
-  re-raising if it stops feeling right in daily use. Expenses is never
-  ghosted this way: with no budget set it just shows a flat, un-filled
-  ring with the real number (a known amount not measured against
-  anything), since "no budget" and "nothing logged" are different states
-  and only the second one means "there's genuinely nothing here yet."
+  Income ghosts on its own zero; Net ghosts when there's been no income
+  *and* no expenses at all. This is an interpretation of "fills as income
+  lands" from the original request, not a literal spec — worth re-raising
+  if it stops feeling right in daily use.
+- **Expenses ghosts on its own zero too, same as Income (2026-08-11,
+  corrected same day).** Originally built as "never ghost Expenses — a
+  known spent amount is real data, and 'no budget set' shouldn't look the
+  same as 'nothing logged.'" That reasoning is still right for the case it
+  was written for (spend something, no budget → show the real number,
+  don't ghost) — but it accidentally also covered the *other* case, spend
+  *nothing* at all, where a solid "0" is exactly as ambiguous
+  ("deliberately zero" vs. "haven't opened the app") as it would be for
+  Income, and Income already ghosts for exactly that reason. Caught
+  because it left the three circles visibly inconsistent — Income and Net
+  faded with a dash, Expenses solid with a "0" — when nothing had been
+  logged. Fixed to mirror Income exactly: Expenses ghosts when
+  `expenses === 0`, full/unghosted the moment anything's been spent,
+  independent of whether a budget is set. The "no budget ≠ nothing
+  logged" distinction still holds — it just now only matters once
+  `expenses > 0` is already true.
 - The empty-state CSS class was almost named `.ghost`, which collides with
   the app's existing `.ghost` button utility class (`border:1px solid
   var(--rule)`, used on "Budget," "Connect Google Drive," etc.) — caught

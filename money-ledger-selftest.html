@@ -737,7 +737,7 @@ async function runTests(H,d){
       d.getElementById("bcIncomeRing").classList.contains("ring-empty"));
     assert("with real expenses logged, Net has activity to show and is not ghosted",
       !d.getElementById("bcNetRing").classList.contains("ring-empty"));
-    assert("the Expenses circle is never ghosted this way — a known spent amount is real data",
+    assert("with real expenses logged (even with zero income), the Expenses circle is not ghosted",
       !d.getElementById("bcExpensesRing").classList.contains("ring-empty"));
     assert("with real expenses logged, the Expenses circle shows the true number, not a dash",
       d.getElementById("bcExpenses").textContent!=="—");
@@ -750,8 +750,12 @@ async function runTests(H,d){
       d.getElementById("bcIncome").textContent==="—");
     assert("with nothing logged at all, Net also reads as a dash and is ghosted, not shown as 0",
       d.getElementById("bcNet").textContent==="—" && d.getElementById("bcNetRing").classList.contains("ring-empty"));
-    assert("with nothing logged, Expenses reads as a real, known zero — not ghosted, not dashed",
-      d.getElementById("bcExpenses").textContent!=="—");
+    /* REGRESSION 2026-08-11: Expenses used to always show a real "0" here,
+       inconsistent with Income/Net both ghosting — a solid 0 is exactly as
+       ambiguous ("deliberately zero" vs. "haven't opened the app") as it
+       is for Income. Expenses now ghosts on its own zero too. */
+    assert("REGRESSION with nothing logged at all, Expenses also reads as a dash and is ghosted, not shown as 0",
+      d.getElementById("bcExpenses").textContent==="—" && d.getElementById("bcExpensesRing").classList.contains("ring-empty"));
   })();
 
   /* 40. REGRESSION colour lives on the arc only, never the number
