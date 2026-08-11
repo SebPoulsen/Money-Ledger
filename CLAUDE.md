@@ -193,8 +193,8 @@ track, filling clockwise from the top. Inside the ring: one compact number
 only, no currency symbol, no decimals (`2,704`, via a dedicated
 `formatCompact`, distinct from the app-wide `formatMoney` rule below — a
 headline figure is allowed to be less precise than a ledger figure). The
-context ("· OF 9,100", "· PREDICTED 2,700") moved to an uppercase mono
-caption *below* the ring, not fighting for space inside it.
+context moved to an uppercase mono caption *below* the ring, not fighting
+for space inside it.
 - **Colour, corrected same day.** First pass coloured income green and
   expenses red-when-under-budget-too, matching entry-row conventions.
   Sebastian's own reaction: seeing the expenses circle in warning-adjacent
@@ -225,6 +225,56 @@ caption *below* the ring, not fighting for space inside it.
   ring. Named `.ring-empty` instead. Worth remembering if a future class
   name reuses a common word like "ghost," "active," or "empty" — check
   for an existing global utility of the same name before reusing it.
+
+**Net's predicted line was removed entirely (2026-08-11, revised same
+day).** The circle rebuild above shipped with "NET · PREDICTED 2,700" as a
+caption, mirroring Expenses' "· OF 9,100." After using it on screen,
+Sebastian asked for it gone — it read as clutter under the ring, not
+useful context. The formula and reasoning documented above ("Predicted net
+= actual income so far...") still holds and the number is still computed
+(it feeds the category-list total, and could resurface elsewhere later),
+it's just no longer shown on the Net circle. Net's caption is now always
+just "Net," full stop — no conditional, no second line.
+
+**Expenses caption is two lines, "Expenses" then "Budget 9,100," not one
+line with "· of" (2026-08-11).** Small wording/layout change after seeing
+the single-line "EXPENSES · OF 9,100" on screen — splitting the label from
+its context onto two lines reads more clearly than one long uppercase
+mono line, and "Budget" is more explicit than "of." Implemented as a
+`.bcircle-caption` (main label) plus a separate `.bcircle-capsub` (second
+line, only populated when a budget exists) — Income and Net don't get a
+sub-line at all.
+
+**Category-budget list gets a "Total budgeted" footer row
+(2026-08-11).** A plain sum of every expense category's `budgetMinor`
+(categories with no budget contribute 0), shown once at least one expense
+category exists — same `totalBudget` figure the Expenses circle already
+computes, just surfaced as its own row so it doesn't require mental
+addition down the list. Bold, top-bordered, styled as the list's natural
+last row rather than a separate panel.
+
+**Budget circles' arc colour is user-customizable, same hue-picker as
+categories (2026-08-11).** Originally scoped out same-session ("skip it
+for now") on the reasoning that the neutral colour scheme removed most of
+the motivation — reopened minutes later once Sebastian saw the neutral
+version on screen and wanted to try it anyway. Each of the three circles
+gets its own swatch button (next to its caption) opening the exact same
+picker component the category rail uses (`.picker`/`.presets`/`.hue`,
+literally the same CSS, wired once in `initBudgetView()` since the three
+circles are static DOM rather than per-category rebuilt rows). Stored as
+`Settings.budgetRingColors: {income, net, expenses}`, each either `null`
+(default) or `{hue, color}`, mirroring how `Category.hue`/`color` are
+stored together. **The one hard rule a custom colour can't override:**
+Expenses still forces `--flag` red when over budget, and Net still forces
+it when negative, regardless of any custom colour set — red keeps meaning
+exactly one thing on this screen (the neutral-colour decision above), even
+after letting the base colour be customized. A custom colour replaces the
+default *ink*, not the warning state. This field is additive/optional on
+`Settings`, read defensively (`state.settings.budgetRingColors || {}`)
+rather than via a formal migration script — same lighter-weight approach
+already used for `Category.budgetMinor` when that field was added to
+already-live category records, since `undefined` and `null` are handled
+identically by the `!= null` checks throughout.
 
 **Amounts hide decimals when they're whole, everywhere (2026-08-11).**
 `formatMoney` now passes `minimumFractionDigits: 0` when the amount has no

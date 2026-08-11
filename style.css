@@ -90,7 +90,7 @@ button{cursor:pointer}
    language even though the shape doesn't. */
 .budgetview{margin-top:18px}
 .budgetcircles{display:flex;align-items:center;justify-content:center;gap:28px;margin:28px 0 36px;flex-wrap:wrap}
-.bcircle{display:flex;flex-direction:column;align-items:center;text-align:center}
+.bcircle{position:relative;display:flex;flex-direction:column;align-items:center;text-align:center}
 .bcircle-ring{position:relative;display:grid}
 .bcircle-ring svg{grid-area:1/1;width:100%;height:100%;display:block}
 .bcircle-ring .bcircle-num{grid-area:1/1;align-self:center;justify-self:center}
@@ -104,7 +104,14 @@ button{cursor:pointer}
 .bcircle-num{font-family:var(--mono);font-size:19px;font-weight:700;line-height:1.15;word-break:break-word}
 .bcircle-net .bcircle-num{font-size:26px}
 .bcircle-num.flag{color:var(--flag)}
-.bcircle-caption{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-top:9px}
+.bcircle-caprow{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:9px}
+.bcircle-caption{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.bcircle-capsub{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-top:2px}
+.bc-sw{width:10px;height:10px;flex:none;padding:0;background:var(--paper);border:1px solid rgba(0,0,0,.3);cursor:pointer}
+.bcircle .picker{width:150px;left:50%;right:auto;transform:translateX(-50%);text-align:center}
+.bcircle .picker .pickhint{text-align:center}
+.bc-reset{display:block;width:100%;margin-top:8px;border:0;background:transparent;font-family:var(--mono);font-size:9px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);cursor:pointer;padding:4px 0 0}
+.bc-reset:hover{color:var(--ink)}
 
 .budgetcatlist{border:1px solid var(--ink)}
 .bcatrow{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--rule-soft)}
@@ -113,6 +120,9 @@ button{cursor:pointer}
 .bcatrow .bcat-name{flex:1;font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bcatrow .bcat-spent{font-family:var(--mono);font-size:11px;color:var(--muted);flex:none;white-space:nowrap}
 .bcatrow input.bcat-budget{width:100px;flex:none;font-family:var(--mono);text-align:right;border:1px solid var(--rule);background:transparent;padding:7px 9px;font-size:13px;border-radius:0}
+.bcatrow.bcat-totalrow{border-top:2px solid var(--ink);font-weight:700}
+.bcatrow.bcat-totalrow .bcat-name{font-weight:700}
+.bcat-totalamt{font-family:var(--mono);font-size:13px;font-weight:700;flex:none}
 @media(max-width:700px){
   .bcircle-income .bcircle-ring,.bcircle-expenses .bcircle-ring{width:96px;height:96px}
   .bcircle-net .bcircle-ring{width:136px;height:136px}

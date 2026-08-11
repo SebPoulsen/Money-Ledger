@@ -67,7 +67,16 @@
           </svg>
           <div class="bcircle-num" id="bcIncome">—</div>
         </div>
-        <div class="bcircle-caption" id="bcIncomeCap">Income</div>
+        <div class="bcircle-caprow">
+          <span class="bcircle-caption">Income</span>
+          <button type="button" class="bc-sw" id="bcIncomeSw" title="Change ring color"></button>
+        </div>
+        <div class="picker" id="bcIncomePicker" hidden>
+          <div class="presets"></div>
+          <input type="range" class="hue" min="0" max="1000">
+          <span class="pickhint">Drag to pick a color</span>
+          <button type="button" class="bc-reset">Use default</button>
+        </div>
       </div>
       <div class="bcircle bcircle-net">
         <div class="bcircle-ring" id="bcNetRing">
@@ -77,7 +86,16 @@
           </svg>
           <div class="bcircle-num" id="bcNet">—</div>
         </div>
-        <div class="bcircle-caption" id="bcNetCap">Net</div>
+        <div class="bcircle-caprow">
+          <span class="bcircle-caption">Net</span>
+          <button type="button" class="bc-sw" id="bcNetSw" title="Change ring color"></button>
+        </div>
+        <div class="picker" id="bcNetPicker" hidden>
+          <div class="presets"></div>
+          <input type="range" class="hue" min="0" max="1000">
+          <span class="pickhint">Drag to pick a color</span>
+          <button type="button" class="bc-reset">Use default</button>
+        </div>
       </div>
       <div class="bcircle bcircle-expenses">
         <div class="bcircle-ring" id="bcExpensesRing">
@@ -87,7 +105,17 @@
           </svg>
           <div class="bcircle-num" id="bcExpenses">—</div>
         </div>
-        <div class="bcircle-caption" id="bcExpensesCap">Expenses</div>
+        <div class="bcircle-caprow">
+          <span class="bcircle-caption">Expenses</span>
+          <button type="button" class="bc-sw" id="bcExpensesSw" title="Change ring color"></button>
+        </div>
+        <div class="bcircle-capsub" id="bcExpensesCapSub"></div>
+        <div class="picker" id="bcExpensesPicker" hidden>
+          <div class="presets"></div>
+          <input type="range" class="hue" min="0" max="1000">
+          <span class="pickhint">Drag to pick a color</span>
+          <button type="button" class="bc-reset">Use default</button>
+        </div>
       </div>
     </div>
 

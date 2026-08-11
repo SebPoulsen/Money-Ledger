@@ -59,7 +59,10 @@ function defaultState() {
   return {
     version: SCHEMA_VERSION,
     updatedAt: nowIso(),
-    settings: { currency: null, introSeen: false, driveConnected: false, driveFileId: null },
+    settings: {
+      currency: null, introSeen: false, driveConnected: false, driveFileId: null,
+      budgetRingColors: { income: null, net: null, expenses: null },
+    },
     categories: SEED_CATEGORIES.map((c) => ({
       id: c.id, name: c.name, direction: c.direction, hue: c.hue, color: hueColor(c.hue),
       budgetMinor: null,
@@ -179,6 +182,7 @@ let viewMonth = new Date().getMonth();
 let viewYear = new Date().getFullYear();
 let editingId = null;
 let openPickerCatId = null;
+let openBcPickerKey = null;
 let railDir = "expense";
 
 // ---------- utils ----------
@@ -217,6 +221,32 @@ function setRingPct(arcId, r, pct) {
   const clamped = Math.max(0, Math.min(100, pct));
   arc.style.strokeDasharray = String(c);
   arc.style.strokeDashoffset = String(c * (1 - clamped / 100));
+}
+
+// Fixed circle→element-id lookup, since (unlike category rows) the three
+// budget rings are static DOM, wired once in initBudgetView and only
+// updated per-render, not rebuilt.
+const RING_KEYS = {
+  income: { sw: "bcIncomeSw", picker: "bcIncomePicker", num: "bcIncome", arc: "bcIncomeArc" },
+  net: { sw: "bcNetSw", picker: "bcNetPicker", num: "bcNet", arc: "bcNetArc" },
+  expenses: { sw: "bcExpensesSw", picker: "bcExpensesPicker", num: "bcExpenses", arc: "bcExpensesArc" },
+};
+
+// Applies the ring's colour: a user-chosen custom colour when set, else the
+// default ink — but `isBad` (over budget / negative net) always wins and
+// forces --flag, regardless of any custom colour. Red keeps meaning exactly
+// one thing on this screen (Budget design decisions) even after
+// customization — it's not a colour choice, it's a warning.
+function applyRingColor(key, isBad) {
+  const { num, arc } = RING_KEYS[key];
+  const numEl = document.getElementById(num);
+  const arcEl = document.getElementById(arc);
+  numEl.classList.toggle("flag", isBad);
+  arcEl.classList.toggle("flag", isBad);
+  const custom = (state.settings.budgetRingColors || {})[key];
+  const inline = !isBad && custom ? custom.color : "";
+  numEl.style.color = inline;
+  arcEl.style.stroke = inline;
 }
 
 function formatMoney(minor, currency) {
@@ -1302,33 +1332,39 @@ function renderBudgetView() {
   document.getElementById("bcIncomeRing").classList.toggle("ring-empty", !incomeHasData);
   document.getElementById("bcIncome").textContent = incomeHasData ? formatCompact(income, currency) : "—";
   setRingPct("bcIncomeArc", 52, incomeHasData ? 100 : 0);
+  applyRingColor("income", false);
 
   const expensesOver = hasAnyBudget && expenses > totalBudget;
-  const expensesEl = document.getElementById("bcExpenses");
-  expensesEl.textContent = formatCompact(expenses, currency);
-  expensesEl.classList.toggle("flag", expensesOver);
-  document.getElementById("bcExpensesArc").classList.toggle("flag", expensesOver);
+  document.getElementById("bcExpenses").textContent = formatCompact(expenses, currency);
   setRingPct("bcExpensesArc", 52, hasAnyBudget ? (expensesOver ? 100 : (expenses / totalBudget) * 100) : 0);
-  document.getElementById("bcExpensesCap").textContent = hasAnyBudget
-    ? `Expenses · of ${formatCompact(totalBudget, currency)}`
-    : "Expenses";
+  applyRingColor("expenses", expensesOver);
+  document.getElementById("bcExpensesCapSub").textContent = hasAnyBudget
+    ? `Budget ${formatCompact(totalBudget, currency)}`
+    : "";
 
-  // Predicted net = actual income logged so far minus total planned
-  // expenses — grounded in what's actually happened, not a pure plan
-  // number, matching this app's whole "log reality" ethos over forecasting.
-  // Ring fill has no natural denominator either, so like income it's a
-  // presence indicator (full once there's any activity this month), with
-  // colour carrying the sign rather than the fill amount.
+  // Net's ring fill has no natural denominator (like income, above), so
+  // it's a presence indicator too — full once there's any activity this
+  // month, with colour carrying the sign. No predicted-net line anymore
+  // (2026-08-11 revision, see CLAUDE.md) — it read as clutter under the
+  // ring; the figure is still computed for the category-list total below,
+  // just no longer surfaced here.
   const netHasData = income > 0 || expenses > 0;
-  const netEl = document.getElementById("bcNet");
   document.getElementById("bcNetRing").classList.toggle("ring-empty", !netHasData);
-  netEl.textContent = netHasData ? formatCompact(net, currency) : "—";
-  netEl.classList.toggle("flag", net < 0);
-  document.getElementById("bcNetArc").classList.toggle("flag", net < 0);
+  document.getElementById("bcNet").textContent = netHasData ? formatCompact(net, currency) : "—";
   setRingPct("bcNetArc", 76, netHasData ? 100 : 0);
-  document.getElementById("bcNetCap").textContent = hasAnyBudget
-    ? `Net · predicted ${incomeHasData ? formatCompact(income - totalBudget, currency) : "—"}`
-    : "Net";
+  applyRingColor("net", net < 0);
+
+  Object.keys(RING_KEYS).forEach((key) => {
+    const { sw, picker } = RING_KEYS[key];
+    const custom = (state.settings.budgetRingColors || {})[key];
+    const swEl = document.getElementById(sw);
+    swEl.style.background = custom ? custom.color : "";
+    const pickerEl = document.getElementById(picker);
+    pickerEl.hidden = openBcPickerKey !== key;
+    if (openBcPickerKey === key) {
+      pickerEl.querySelector(".hue").value = custom ? Math.round(custom.hue * 1000) : 500;
+    }
+  });
 
   const list = document.getElementById("budgetCatList");
   list.innerHTML = expenseCats.length === 0 ? '<div class="register-empty">No expense categories yet.</div>' : "";
@@ -1353,6 +1389,16 @@ function renderBudgetView() {
       renderAll();
     });
   });
+
+  if (expenseCats.length > 0) {
+    const totalRow = document.createElement("div");
+    totalRow.className = "bcatrow bcat-totalrow";
+    totalRow.innerHTML = `
+      <span class="bcat-name">Total budgeted</span>
+      <span class="bcat-totalamt">${formatMoney(totalBudget, currency)}</span>
+    `;
+    list.appendChild(totalRow);
+  }
 }
 
 function showBudgetView(show) {
@@ -1361,9 +1407,66 @@ function showBudgetView(show) {
   document.getElementById("mainCols").hidden = show;
 }
 
+function setBudgetRingColor(key, hue, hex) {
+  const colors = Object.assign({}, state.settings.budgetRingColors);
+  colors[key] = { hue, color: hex };
+  state.settings.budgetRingColors = colors;
+  saveState();
+  openBcPickerKey = null;
+  renderAll();
+}
+
 function initBudgetView() {
   document.getElementById("budgetToggle").addEventListener("click", () => showBudgetView(true));
   document.getElementById("budgetBack").addEventListener("click", () => showBudgetView(false));
+
+  // The three ring pickers are static DOM (unlike category rows, which are
+  // rebuilt per render), so they're wired once here rather than re-wired
+  // on every renderBudgetView() call — that call only toggles visibility
+  // and updates the swatch/hue-slider values.
+  Object.keys(RING_KEYS).forEach((key) => {
+    const { sw, picker } = RING_KEYS[key];
+    const swEl = document.getElementById(sw);
+    const pickerEl = document.getElementById(picker);
+    const presets = pickerEl.querySelector(".presets");
+    HUE_STOPS.slice(0, -1).forEach((hex, i) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.style.background = hex;
+      b.addEventListener("click", () => setBudgetRingColor(key, i / (HUE_STOPS.length - 1), hex));
+      presets.appendChild(b);
+    });
+    const hueInput = pickerEl.querySelector(".hue");
+    hueInput.addEventListener("input", () => {
+      swEl.style.background = hueColor(Number(hueInput.value) / 1000);
+    });
+    hueInput.addEventListener("change", () => {
+      const hue = Number(hueInput.value) / 1000;
+      setBudgetRingColor(key, hue, hueColor(hue));
+    });
+    pickerEl.querySelector(".bc-reset").addEventListener("click", () => {
+      const colors = Object.assign({}, state.settings.budgetRingColors);
+      colors[key] = null;
+      state.settings.budgetRingColors = colors;
+      saveState();
+      openBcPickerKey = null;
+      renderAll();
+    });
+    swEl.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openBcPickerKey = openBcPickerKey === key ? null : key;
+      renderBudgetView();
+    });
+    pickerEl.addEventListener("click", (e) => e.stopPropagation());
+  });
+  document.addEventListener("click", (e) => {
+    if (!openBcPickerKey) return;
+    const pickerEl = document.getElementById(RING_KEYS[openBcPickerKey].picker);
+    if (pickerEl && !pickerEl.contains(e.target)) {
+      openBcPickerKey = null;
+      renderBudgetView();
+    }
+  });
 }
 
 function renderAll() {
