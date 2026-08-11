@@ -103,7 +103,6 @@ button{cursor:pointer}
 .bcircle-net .bcring-track,.bcircle-net .bcring-arc{stroke-width:12}
 .bcircle-num{font-family:var(--mono);font-size:19px;font-weight:700;line-height:1.15;word-break:break-word}
 .bcircle-net .bcircle-num{font-size:26px}
-.bcircle-num.flag{color:var(--flag)}
 .bcircle-caprow{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:9px}
 .bcircle-caption{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .bcircle-capsub{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-top:2px}

@@ -269,7 +269,13 @@ Expenses still forces `--flag` red when over budget, and Net still forces
 it when negative, regardless of any custom colour set — red keeps meaning
 exactly one thing on this screen (the neutral-colour decision above), even
 after letting the base colour be customized. A custom colour replaces the
-default *ink*, not the warning state. This field is additive/optional on
+default *ink*, not the warning state. **Colour lives on the arc only, never
+the number (revised same day).** The first version also recoloured the
+number text inside the ring — Sebastian asked for the number to always
+stay plain ink, with colour (custom or flag-red) carried by the arc alone.
+`applyRingColor()` no longer touches the `.bcircle-num` element at all,
+only `.bcring-arc`; the now-unused `.bcircle-num.flag` CSS rule was
+removed. This field is additive/optional on
 `Settings`, read defensively (`state.settings.budgetRingColors || {}`)
 rather than via a formal migration script — same lighter-weight approach
 already used for `Category.budgetMinor` when that field was added to

@@ -238,15 +238,11 @@ const RING_KEYS = {
 // one thing on this screen (Budget design decisions) even after
 // customization — it's not a colour choice, it's a warning.
 function applyRingColor(key, isBad) {
-  const { num, arc } = RING_KEYS[key];
-  const numEl = document.getElementById(num);
+  const { arc } = RING_KEYS[key];
   const arcEl = document.getElementById(arc);
-  numEl.classList.toggle("flag", isBad);
   arcEl.classList.toggle("flag", isBad);
   const custom = (state.settings.budgetRingColors || {})[key];
-  const inline = !isBad && custom ? custom.color : "";
-  numEl.style.color = inline;
-  arcEl.style.stroke = inline;
+  arcEl.style.stroke = !isBad && custom ? custom.color : "";
 }
 
 function formatMoney(minor, currency) {
