@@ -1227,6 +1227,32 @@ async function runTests(H,d){
       H.getState().settings.budgetRingColors.net && H.getState().settings.budgetRingColors.net.color==="#3A6E70");
   })();
 
+  /* 56. REGRESSION (2026-08-12): the FAB stays visible on every screen
+     and returns to the register (like the logo) before scrolling/
+     focusing quickadd, rather than silently failing on Budget/Recurring
+     where quickadd isn't shown. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.renderAll();
+    d.getElementById("budgetToggle").click();
+    assert("the FAB is visible even while on the Budget screen",
+      d.getElementById("fab").offsetParent!==null || !d.getElementById("fab").hidden);
+    d.getElementById("fab").click();
+    assert("REGRESSION clicking the FAB from the Budget screen returns to the register",
+      d.getElementById("budgetView").hidden && !d.getElementById("mainCols").hidden);
+
+    d.getElementById("recurringToggle").click();
+    d.getElementById("fab").click();
+    assert("REGRESSION clicking the FAB from the Recurring screen returns to the register",
+      d.getElementById("recurringView").hidden && !d.getElementById("mainCols").hidden);
+    // Not asserted here: whether .focus() actually lands on #qaAmount —
+    // document.activeElement isn't reliable inside this suite's
+    // display:none iframe (focus fundamentally needs a rendered frame),
+    // same limitation as the budget-field select-on-focus work earlier.
+    // Verified visually instead (see CLAUDE.md).
+  })();
+
   return results;
 }
 })();

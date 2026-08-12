@@ -462,6 +462,22 @@ patterns doesn't mean re-litigating what those patterns are applied to.
 
 ## General fixes (2026-08-12)
 
+**The FAB stays visible on every screen and always does something
+useful, rather than hiding on Budget/Recurring.** Sebastian asked which
+was the right call: hide the FAB where quick-add isn't shown, or keep it
+everywhere and have it take you back to logging. Recommended and built
+the latter — the FAB is the one thumb-reachable "log something" button
+on a phone (bottom-corner-fixed, unlike the logo which sits at the top of
+the page and needs a scroll-up to reach), so making it disappear on two
+of the app's three screens would remove the more mobile-ergonomic path
+back to logging, not just an alternate one. It now calls the same
+`showBudgetView(false)`/`showRecurringView(false)` pair the logo does
+before its existing scroll-into-view-and-focus behaviour, so from any
+screen it either lands directly in the amount field (already on the
+register) or gets you there first (from Budget/Recurring) — it was
+previously wired only for the first case, silently doing nothing useful
+on the other two since quick-add isn't in the DOM's visible flow there.
+
 **Budget ring colours now actually sync across devices.** Reported by
 Sebastian: colours set on his laptop still showed as plain ink on his
 phone. Investigated and confirmed real, not a loading issue —
@@ -654,7 +670,7 @@ establishing each one's "born" snapshot, before any of them touch Drive
 for real** — mirrors what tests 11–16 already do, just made explicit
 here since it's easy to get this exact ordering wrong by accident.
 
-**What it covers (155 tests as of 2026-08-12, up from 23):**
+**What it covers (158 tests as of 2026-08-12, up from 23):**
 - **Sync/merge** (the original 23): the `mergeRecords` algorithm directly
   (only-local, only-remote, both-edited, delete-vs-edit,
   identical/skewed/ambiguous timestamps, empty sides, seed-category id

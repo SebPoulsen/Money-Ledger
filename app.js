@@ -1511,6 +1511,13 @@ function initDriveSilentReconnect() {
 
 function initFab() {
   document.getElementById("fab").addEventListener("click", () => {
+    // The FAB stays visible on every screen (Budget/Recurring included) —
+    // rather than hiding it where quickadd isn't currently shown, it
+    // first returns to the register (same as the logo) so the one
+    // thumb-reachable "log something" button always does something,
+    // instead of silently failing to scroll/focus a hidden element.
+    showBudgetView(false);
+    showRecurringView(false);
     document.getElementById("quickadd").scrollIntoView({ behavior: "smooth", block: "start" });
     document.getElementById("qaAmount").focus();
   });
