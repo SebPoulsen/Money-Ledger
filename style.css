@@ -131,6 +131,14 @@ button{cursor:pointer}
   .bcircle-net .bcircle-num{font-size:22px}
   .bcatrow{flex-wrap:wrap}
   .bcatrow .bcat-spent{order:3;width:100%;padding-left:21px}
+  /* Phone only — Net (the larger, derived circle) on top, Income and
+     Expenses side by side underneath it, reading as a triangle. Desktop
+     stays the untouched horizontal row above (hard requirement) — this
+     grid only exists inside this media query. */
+  .budgetcircles{display:grid;grid-template-columns:1fr 1fr;grid-template-areas:"net net" "income expenses";justify-items:center;gap:22px 12px}
+  .bcircle-net{grid-area:net}
+  .bcircle-income{grid-area:income}
+  .bcircle-expenses{grid-area:expenses}
 }
 
 /* recurring — backlog #3. Add form reuses .quickadd/.qa-field so it reads

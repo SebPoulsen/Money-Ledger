@@ -256,6 +256,19 @@ for space inside it.
   ring. Named `.ring-empty` instead. Worth remembering if a future class
   name reuses a common word like "ghost," "active," or "empty" — check
   for an existing global utility of the same name before reusing it.
+- **Phone-width layout is a triangle, not a shrunk copy of the desktop row
+  (2026-08-12).** Below 700px, Net (the larger, derived circle) moves
+  above Income and Expenses rather than staying in a horizontal line with
+  them — `.budgetcircles` switches from flex to a two-row CSS grid
+  (`"net net" / "income expenses"`) purely inside that one media query.
+  Desktop's flex row is untouched — the grid rules only exist below the
+  breakpoint, so there's no risk of the phone layout's structure leaking
+  upward. Verified by rendering the iframe at both a 390px and a 1000px
+  width and screenshotting each, rather than trusting the media query
+  alone — OS-level window resizing in this dev environment doesn't
+  reliably reflect in a screenshot, but an iframe's own width always
+  drives its internal viewport correctly, which is why that's the
+  technique to reach for first when a real device isn't at hand.
 
 **Net's predicted line was removed entirely (2026-08-11, revised same
 day).** The circle rebuild above shipped with "NET · PREDICTED 2,700" as a
@@ -740,11 +753,17 @@ ledger-paper plainness *is* the trust signal.
    edits, deletes, and conflicts all verified live, not just via the
    self-test suite. `driveTokenClientFor()`'s reused-token-client pattern
    held up fine under that real load, no stale-callback issues observed.
-   **Known gap: mobile Safari OAuth popup is broken** (ITP breaks the
-   popup handoff — see CLAUDE.md session notes / git log for the
-   diagnosis and the redirect-mode fix that was proposed but not yet
-   built). Real workflow is phone-to-log, laptop-to-review, so this
-   blocks calling v1 fully done until it's fixed.
+   **Status: v1 is fully done (confirmed 2026-08-12).** The mobile Safari
+   OAuth popup issue tracked here — Safari's ITP was believed to break the
+   popup-to-main-window handoff after "Connect Google Drive," leaving a
+   white/blank screen instead of a completed connection — no longer
+   reproduces. Sebastian confirmed it works on a real phone, both Safari
+   and Chrome. Nothing in the code changed the connect flow itself between
+   when this was first flagged and now (only token caching and error
+   messaging were touched, not `connectDrive()`'s popup mechanics), so
+   this was most likely fixed upstream (an iOS/Safari or Google Identity
+   Services update) rather than by anything in this repo — worth knowing
+   if it ever resurfaces, since there's no local fix to point back to.
 2. **Budgets.** Per-category monthly budget amounts and the budget-vs-actual
    visual — this is what finally gives `--flag` red something real to
    trigger on. The category bar and the month's Net figure should read as a
