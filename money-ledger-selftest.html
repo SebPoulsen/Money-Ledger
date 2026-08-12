@@ -846,28 +846,38 @@ async function runTests(H,d){
     fireChange(row());
     assert("committing a typed budget amount sets the category's budgetMinor",
       H.getState().categories.find(function(c){return c.id==="seed-groceries";}).budgetMinor===400000);
-    assert("REGRESSION after setting a whole-number budget, the input re-renders without a trailing .00 (2026-08-12)",
-      row().value==="4000");
-    row().value="";
-    fireChange(row());
     assert("clearing the budget input removes the category's budget (back to null)",
-      H.getState().categories.find(function(c){return c.id==="seed-groceries";}).budgetMinor===null);
+      (function(){ row().value=""; fireChange(row()); return H.getState().categories.find(function(c){return c.id==="seed-groceries";}).budgetMinor===null; })());
   })();
 
-  /* 43b. REGRESSION: editable amount fields (budget, edit-entry, recurring)
-     hide decimals on a whole amount, same as formatMoney everywhere else —
-     they used to always pre-fill with a fixed two-decimal string on
-     purpose ("stable format to type into"); reversed 2026-08-12 after it
-     read as simply wrong, not stable. Fractional amounts still keep their
-     real decimals — this isn't formatCompact, just decimal-hiding. */
+  /* 43b. REGRESSION (2026-08-12): the budget field shows a pretty
+     formatted value at rest (thousands separator + currency, "3.333
+     kr.") but the plain editable number on focus — type=number can't
+     hold formatted text, hence the field is type=text now. Editing
+     itself always happens on the plain number; only the resting/blurred
+     display is fancy. */
   (function(){
     H.resetState(); H.setView(2026,7);
     var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
-    H.editCategory("seed-rent",{budgetMinor:199}); // 1.99 — fractional, decimals must stay
+    H.editCategory("seed-groceries",{budgetMinor:333300}); // 3333.00, whole
+    H.editCategory("seed-rent",{budgetMinor:199}); // 1.99, fractional — decimals must survive formatting
     H.renderAll();
-    var row=d.querySelector('#budgetCatList .bcatrow[data-id="seed-rent"] .bcat-budget');
-    assert("REGRESSION a fractional budget amount keeps its real decimals in the input",
-      row.value==="1.99");
+    var groceriesRow=d.querySelector('#budgetCatList .bcatrow[data-id="seed-groceries"] .bcat-budget');
+    var rentRow=d.querySelector('#budgetCatList .bcatrow[data-id="seed-rent"] .bcat-budget');
+    assert("REGRESSION the budget field shows thousands separator + currency at rest",
+      digits(groceriesRow.value)==="3333" && groceriesRow.value.toLowerCase().indexOf("kr")!==-1);
+    assert("REGRESSION a fractional budget amount keeps its real decimals in the pretty resting display",
+      digits(rentRow.value)==="199");
+    // real .focus()/.blur() don't reliably fire inside this suite's
+    // display:none iframe (a hidden frame generally can't hold real
+    // browser focus) — dispatch the events directly instead, same
+    // approach as fireChange() above.
+    groceriesRow.dispatchEvent(new (d.defaultView.Event)("focus"));
+    assert("REGRESSION focusing the budget field swaps to the plain editable number, no thousands separator or currency",
+      groceriesRow.value==="3333");
+    groceriesRow.dispatchEvent(new (d.defaultView.Event)("blur"));
+    assert("REGRESSION blurring without editing restores the pretty formatted display",
+      digits(groceriesRow.value)==="3333" && groceriesRow.value.toLowerCase().indexOf("kr")!==-1);
   })();
   (function(){
     H.resetState(); H.setView(2026,7);

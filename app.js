@@ -1587,16 +1587,30 @@ function renderBudgetView() {
       <span class="dot" style="background:${c.color}"></span>
       <span class="bcat-name">${escapeHtml(c.name)}</span>
       <span class="bcat-spent">${formatMoney(spent, currency)} spent</span>
-      <input type="number" class="bcat-budget" inputmode="decimal" step="1" min="0" placeholder="No budget"
-        value="${c.budgetMinor != null ? amountInputValue(c.budgetMinor) : ""}">
+      <input type="text" class="bcat-budget" inputmode="decimal" placeholder="No budget"
+        value="${c.budgetMinor != null ? formatMoney(c.budgetMinor, currency) : ""}">
     `;
     list.appendChild(row);
     const budgetInput = row.querySelector(".bcat-budget");
-    // Select the whole value on focus so tapping the field is enough to
-    // start overwriting it — otherwise the cursor lands wherever the tap
-    // happened to land within a right-aligned value, and clearing it means
-    // manually navigating to the far side first.
-    budgetInput.addEventListener("focus", (e) => e.target.select());
+    // Resting state shows the pretty formatted value (thousands separator
+    // + currency, e.g. "3.333 kr.") — type=number can't hold that, hence
+    // type=text here. Focus swaps in the plain editable number (also
+    // selecting it, so tapping the field is enough to start overwriting —
+    // otherwise the cursor lands wherever the tap happened to land within
+    // a right-aligned value). blur restores the pretty format; it runs on
+    // every blur regardless of whether "change" also fired and rebuilt
+    // this row already (change fires first and replaces the row via
+    // renderAll() when the value actually changed — this blur handler
+    // then fires on the detached old node and is a harmless no-op; when
+    // nothing changed, this is the only thing that runs, and this node is
+    // still the live one, so it's the only case that needs it).
+    budgetInput.addEventListener("focus", (e) => {
+      if (c.budgetMinor != null) e.target.value = amountInputValue(c.budgetMinor);
+      e.target.select();
+    });
+    budgetInput.addEventListener("blur", (e) => {
+      e.target.value = c.budgetMinor != null ? formatMoney(c.budgetMinor, currency) : "";
+    });
     budgetInput.addEventListener("change", (e) => {
       const budgetMinor = parseAmountToMinor(e.target.value);
       editCategory(c.id, { budgetMinor });

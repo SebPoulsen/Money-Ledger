@@ -489,6 +489,23 @@ class of bug) are still there and weren't touched, since deleting/merging
 real category data isn't something to do silently without Sebastian
 confirming which records are the actual duplicates first.
 
+**The budget field shows a pretty formatted value at rest (thousands
+separator + currency, e.g. "3.333 kr."), and the plain editable number on
+focus.** `type="number"` can't hold formatted text — a number input
+rejects any value containing non-digit characters like "." as a thousands
+separator or "kr." — so this required switching `.bcat-budget` to
+`type="text"`. Editing always happens on the plain number (via the same
+`amountInputValue` used for the pre-fill); only the resting/blurred
+display uses `formatMoney`. Implementation note for future editable-field
+formatting like this: `blur` (not `change`) is what restores the pretty
+display, and it runs unconditionally on every blur — `change` already
+triggers `renderAll()`, which tears down and rebuilds this exact row when
+the value actually changed, so by the time `blur` fires afterward it's
+acting on an already-detached node (harmless no-op); when nothing
+changed, `change` never fires at all, and `blur` on the still-live node
+is the *only* thing that restores the formatting. Relying on `change`
+alone would leave the field stuck showing the plain number after a
+focus-then-blur-without-editing.
 ## Testing before you claim it works
 
 There is an automated self-test suite — `money-ledger-selftest.html`,
@@ -567,7 +584,7 @@ failing/total summary.
   delete/import/clear-month flows don't hang a headless run waiting for a
   dialog no one will click.
 
-**What it covers (147 tests as of 2026-08-12, up from 23):**
+**What it covers (149 tests as of 2026-08-12, up from 23):**
 - **Sync/merge** (the original 23): the `mergeRecords` algorithm directly
   (only-local, only-remote, both-edited, delete-vs-edit,
   identical/skewed/ambiguous timestamps, empty sides, seed-category id
