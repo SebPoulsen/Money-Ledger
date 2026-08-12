@@ -460,7 +460,61 @@ that's a separate, already-settled decision (see the "one screen, split
 by toggle" entry above); borrowing the register's visual/interaction
 patterns doesn't mean re-litigating what those patterns are applied to.
 
+**The list rows themselves went further — reusing `.entryrow` outright,
+not just the surrounding `.register`/`.dayhead` shell (2026-08-12).** The
+list-level reuse above still left each *row* as its own bespoke design
+(`.recrow`: a dot, an inline-editable name input, an inline-editable
+amount input, a category select, a day select, and a delete "×", all in
+one flex row) — fine at desktop width, but on a phone it wrapped onto two
+lines, which Sebastian flagged as broken-looking. He asked to copy the
+register's row design specifically: category on top, the item's own name
+as a muted note line underneath, one line tall, editing moved into a
+popup triggered by clicking the row. Built exactly that: each row is now
+a plain `.entryrow` button (the literal class the register's entries use,
+with `r.name` filling the `.note` slot a register row uses for its own
+optional note), and clicking it opens `#editRecurringScrim`, a new sheet
+that reuses `#editScrim`'s markup and CSS wholesale — a Name field
+standing in for Note, a Day `<select>` standing in for Date. No new CSS
+for either the row or the sheet; both fully inherit their look from
+classes the register/entry-edit sheet already defined. The old
+`.recrow`/`.rec-*` CSS was removed entirely, not left dormant, since
+nothing renders that markup anymore. See "General fixes (2026-08-12)" for
+the testing side of this change.
+
 ## General fixes (2026-08-12)
+
+**Recurring items now render as one-line `.entryrow` rows with editing
+moved into a popup sheet** — see "Recurring design decisions" above for
+the full reasoning; this note is just the verification record. Verified
+via the self-test suite (rewrote tests 49 and 54, which asserted against
+the old `.recrow` markup and would have false-failed otherwise, now 162
+tests/0 failing) and a DOM-structure dump confirming the new rows carry
+`flex-wrap: nowrap` (no wrap rule exists for `.entryrow` at any width)
+and that zero `.recrow` elements remain in the rendered output. **Not
+confirmed by an actual on-screen screenshot this session** — repeated
+attempts to screenshot a real Chrome window hit the same OS-level
+flakiness noted elsewhere in this file (`screencapture` intermittently
+captured this coding surface instead of the Chrome window, even after
+`activate`), so this one should still be eyeballed on a real phone before
+considering it fully done.
+
+**Testing gotcha: the browser's disk cache can serve a stale `app.js`
+even after a hard-reload of `index.html` (2026-08-12).** Hit while
+verifying the recurring-row redesign above: `index.html`'s
+`<script src="app.js">` has no cache-busting query string (only the
+self-test harness's *own* iframe `src` is cache-busted, via
+`?mltest=1&cb=Date.now()`), so a normal Chrome profile can keep serving a
+disk-cached `app.js` from an earlier page load in the same profile even
+though the HTML around it is demonstrably fresh — confirmed via `curl`
+that the server was returning the new file while the browser tab's
+behavior (and a debug DOM dump) still showed old code running. A
+Cmd+Shift+R hard-reload of the tab did not fix it either. What did:
+running the same test/verification page in a fresh **incognito** window
+(`open -na "Google Chrome" --args --incognito "<url>"`), since incognito
+uses its own cache separate from the regular profile's. Worth remembering
+any time a fix "isn't taking effect" in this local Chrome despite the
+served file being correct — check incognito before assuming the app code
+is still wrong.
 
 **The FAB stays visible on every screen and always does something
 useful, rather than hiding on Budget/Recurring.** Sebastian asked which
@@ -670,7 +724,7 @@ establishing each one's "born" snapshot, before any of them touch Drive
 for real** — mirrors what tests 11–16 already do, just made explicit
 here since it's easy to get this exact ordering wrong by accident.
 
-**What it covers (158 tests as of 2026-08-12, up from 23):**
+**What it covers (162 tests as of 2026-08-12, up from 23):**
 - **Sync/merge** (the original 23): the `mergeRecords` algorithm directly
   (only-local, only-remote, both-edited, delete-vs-edit,
   identical/skewed/ambiguous timestamps, empty sides, seed-category id

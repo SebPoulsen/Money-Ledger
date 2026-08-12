@@ -292,6 +292,46 @@
   </div>
 </div>
 
+<!-- edit recurring item sheet -->
+<div class="scrim" id="editRecurringScrim">
+  <div class="sheet">
+    <h2>Edit recurring item</h2>
+    <form id="editRecurringForm" novalidate>
+      <div class="field">
+        <div class="dirtoggle" style="width:100%;display:flex">
+          <button type="button" data-dir="expense" aria-pressed="true" style="flex:1">Spent</button>
+          <button type="button" data-dir="income" aria-pressed="false" style="flex:1">Income</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="editRecName">Name</label>
+        <input type="text" id="editRecName" required>
+      </div>
+      <div class="two">
+        <div class="field">
+          <label for="editRecAmount">Amount</label>
+          <input type="number" id="editRecAmount" step="1" min="0" required>
+        </div>
+        <div class="field">
+          <label for="editRecDay">Day</label>
+          <select id="editRecDay"></select>
+        </div>
+      </div>
+      <div class="field">
+        <label for="editRecCategory">Category</label>
+        <select id="editRecCategory"></select>
+      </div>
+      <div class="sheet-actions">
+        <button type="button" id="editRecCancel" class="ghost">Cancel</button>
+        <button type="submit" class="solid">Save</button>
+      </div>
+      <div class="sheet-actions">
+        <button type="button" id="editRecDelete" class="linkbtn">Delete this recurring item</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <script src="https://accounts.google.com/gsi/client"></script>
 <script src="app.js"></script>
 </body>

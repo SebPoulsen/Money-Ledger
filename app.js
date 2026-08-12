@@ -195,6 +195,7 @@ let fakeDriveNextId = 1;
 let viewMonth = new Date().getMonth();
 let viewYear = new Date().getFullYear();
 let editingId = null;
+let editingRecurringId = null;
 let openPickerCatId = null;
 let openBcPickerKey = null;
 let railDir = "expense";
@@ -1787,68 +1788,100 @@ function renderRecurringView() {
 
     rows.forEach((r) => {
       const cat = catById(r.categoryId);
-      const row = document.createElement("div");
-      row.className = "recrow";
+      const amtClass = r.direction === "income" ? "income" : "";
+      const sign = r.direction === "income" ? "+" : "−";
+      // Same row shape as the register's .entryrow (category on top, name
+      // as the muted line underneath, amount right-aligned) — editing moved
+      // into a popup sheet instead of inline fields, per Sebastian's request
+      // (2026-08-12) that a recurring item read exactly like a logged entry
+      // instead of sprawling across two lines on narrow screens.
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "entryrow";
       row.dataset.id = r.id;
       row.innerHTML = `
         <span class="dot" style="background:${cat ? cat.color : "var(--none)"}"></span>
-        <input class="rec-name" value="${escapeHtml(r.name)}">
-        <input type="text" class="rec-amount" inputmode="decimal" value="${formatMoney(r.amountMinor, currency)}">
-        <select class="rec-category"></select>
-        <span class="rec-daywrap">Day <select class="rec-day"></select></span>
-        <button type="button" class="del" title="Delete recurring item">×</button>
+        <span class="meta">
+          <span class="cat">${cat ? escapeHtml(cat.name) : "Uncategorized"}</span>
+          <span class="note">${escapeHtml(r.name)}</span>
+        </span>
+        <span class="amt ${amtClass}">${sign}${formatMoney(r.amountMinor, currency)}</span>
       `;
+      row.addEventListener("click", () => openEditRecurringSheet(r.id));
       list.appendChild(row);
-      populateCategorySelect(row.querySelector(".rec-category"), r.direction, r.categoryId);
-      populateDaySelect(row.querySelector(".rec-day"), r.dayOfMonth);
-
-      row.querySelector(".rec-name").addEventListener("change", (e) => {
-        const v = e.target.value.trim();
-        editRecurring(r.id, { name: v || r.name });
-        saveState();
-        renderAll();
-      });
-      const amountInput = row.querySelector(".rec-amount");
-      // Same rest-formatted/focus-plain pattern as the budget field: see
-      // CLAUDE.md "General fixes" for why blur (not change) is what
-      // restores the formatting.
-      amountInput.addEventListener("focus", (e) => {
-        e.target.value = amountInputValue(r.amountMinor);
-        e.target.select();
-      });
-      amountInput.addEventListener("blur", (e) => {
-        e.target.value = formatMoney(r.amountMinor, currency);
-      });
-      amountInput.addEventListener("change", (e) => {
-        const minor = parseAmountToMinor(e.target.value);
-        if (minor == null) { e.target.value = amountInputValue(r.amountMinor); return; }
-        editRecurring(r.id, { amountMinor: minor });
-        saveState();
-        renderAll();
-      });
-      row.querySelector(".rec-category").addEventListener("change", (e) => {
-        editRecurring(r.id, { categoryId: e.target.value });
-        saveState();
-        renderAll();
-      });
-      row.querySelector(".rec-day").addEventListener("change", (e) => {
-        const newDay = Math.round(Number(e.target.value));
-        if (!newDay || newDay < 1 || newDay > 31) { e.target.value = r.dayOfMonth; return; }
-        editRecurring(r.id, { dayOfMonth: newDay });
-        saveState();
-        renderAll();
-      });
-      row.querySelector(".del").addEventListener("click", () => {
-        deleteRecurring(r.id);
-        saveState();
-        toast(`"${r.name}" removed from Recurring`, () => {
-          undeleteRecurring(r.id);
-          saveState();
-          renderAll();
-        });
-        renderAll();
-      });
     });
+  });
+}
+
+// ---------- edit recurring sheet ----------
+// Mirrors openEditSheet/closeEditSheet/initEditSheet above almost exactly —
+// same .scrim/.sheet/.dirtoggle/.two/.field/.sheet-actions markup and CSS,
+// just Day (a select) standing in for Date and Name standing in for Note.
+
+function openEditRecurringSheet(recurringId) {
+  editingRecurringId = recurringId;
+  const r = state.recurring.find((x) => x.id === recurringId);
+  const scrim = document.getElementById("editRecurringScrim");
+  const dirBtns = scrim.querySelectorAll(".dirtoggle button");
+  const catSelect = document.getElementById("editRecCategory");
+
+  function setDir(dir) {
+    dirBtns.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.dir === dir)));
+    populateCategorySelect(catSelect, dir, r.categoryId);
+  }
+  dirBtns.forEach((b) => { b.onclick = () => setDir(b.dataset.dir); });
+
+  setDir(r.direction);
+  document.getElementById("editRecName").value = r.name;
+  document.getElementById("editRecAmount").value = amountInputValue(r.amountMinor);
+  populateDaySelect(document.getElementById("editRecDay"), r.dayOfMonth);
+  scrim.classList.add("on");
+}
+
+function closeEditRecurringSheet() {
+  editingRecurringId = null;
+  document.getElementById("editRecurringScrim").classList.remove("on");
+}
+
+function initEditRecurringSheet() {
+  const scrim = document.getElementById("editRecurringScrim");
+  document.getElementById("editRecCancel").addEventListener("click", closeEditRecurringSheet);
+  scrim.addEventListener("click", (e) => { if (e.target === scrim) closeEditRecurringSheet(); });
+
+  document.getElementById("editRecurringForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (!state.recurring.some((x) => x.id === editingRecurringId)) return;
+    const dir = scrim.querySelector('.dirtoggle button[aria-pressed="true"]').dataset.dir;
+    const amountMinor = parseAmountToMinor(document.getElementById("editRecAmount").value);
+    if (amountMinor == null) return;
+    const name = document.getElementById("editRecName").value.trim();
+    if (!name) return;
+    const day = Math.round(Number(document.getElementById("editRecDay").value));
+    editRecurring(editingRecurringId, {
+      direction: dir,
+      amountMinor,
+      name,
+      categoryId: document.getElementById("editRecCategory").value,
+      dayOfMonth: day,
+    });
+    saveState();
+    closeEditRecurringSheet();
+    toast("Recurring item updated");
+    renderAll();
+  });
+
+  document.getElementById("editRecDelete").addEventListener("click", () => {
+    if (!editingRecurringId) return;
+    const recurring = deleteRecurring(editingRecurringId);
+    if (!recurring) return;
+    saveState();
+    closeEditRecurringSheet();
+    toast(`"${recurring.name}" removed from Recurring`, () => {
+      undeleteRecurring(recurring.id);
+      saveState();
+      renderAll();
+    });
+    renderAll();
   });
 }
 
@@ -1970,6 +2003,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initSettings();
   initBudgetView();
   initRecurringView();
+  initEditRecurringSheet();
   initFab();
   initHomeLink();
   if (state.settings.currency) renderAll();

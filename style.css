@@ -150,28 +150,15 @@ button{cursor:pointer}
 
 /* recurring — backlog #3. Add form reuses .quickadd/.qa-field so it reads
    as the same "logging bar" as the front page's own quick-add; the list
-   reuses .register/.dayhead so recurring items grouped by day read as the
-   same rhythm as entries grouped by day in the real register. */
+   reuses .register/.dayhead/.entryrow outright (2026-08-12) so a recurring
+   item renders identically to a logged entry — category on top, the
+   item's own name as the muted note line underneath, one line tall —
+   instead of its own two-line inline-editable row design. Editing moved
+   into #editRecurringScrim, a popup sheet mirroring #editScrim. */
 .recurringview{margin-top:18px}
 /* same gap as .cols' margin-top on the front page — the distance from
    quick-add down to the register box */
 .recurring-items-label{margin-top:26px}
-.recrow{display:flex;align-items:center;gap:8px;padding:9px 12px 9px 22px;border-bottom:1px solid var(--rule-soft)}
-.recrow:last-child{border-bottom:0}
-.recrow .dot{width:11px;height:11px;flex:none;border:1px solid rgba(0,0,0,.3)}
-.recrow input.rec-name{flex:1;min-width:0;font-size:13px;background:transparent;border:0;padding:2px 0}
-.recrow input.rec-name:focus{outline:0;border-bottom:1px solid var(--ink)}
-.recrow input.rec-amount{width:118px;flex:none;font-family:var(--mono);text-align:right;border:1px solid var(--rule);background:transparent;padding:7px 8px;font-size:13px;border-radius:0}
-.recrow select.rec-category{flex:none;max-width:130px;border:1px solid var(--rule);background:var(--paper);padding:7px 8px;font-size:12px;border-radius:0}
-.recrow .rec-daywrap{display:flex;align-items:center;gap:4px;flex:none;font-family:var(--mono);font-size:10px;color:var(--muted);text-transform:uppercase}
-.recrow select.rec-day{width:64px;flex:none;font-family:var(--mono);text-align:center;border:1px solid var(--rule);background:var(--paper);padding:7px 4px;font-size:13px;border-radius:0}
-.recrow .del{border:0;background:transparent;color:var(--muted);font-size:16px;line-height:1;padding:0 2px;flex:none}
-.recrow .del:hover{color:var(--flag)}
-@media(max-width:700px){
-  .recrow{flex-wrap:wrap}
-  .recrow input.rec-name{width:100%;order:1}
-  .recrow .rec-amount,.recrow .rec-category,.recrow .rec-daywrap{order:2}
-}
 
 /* register — chronological list, grouped by week with subtotals */
 .register{border:1px solid var(--ink)}
