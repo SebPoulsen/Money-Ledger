@@ -62,6 +62,13 @@ function defaultState() {
     settings: {
       currency: null, introSeen: false, driveConnected: false, driveFileId: null,
       budgetRingColors: { income: null, net: null, expenses: null },
+      // Bumped only when budgetRingColors itself changes — the one
+      // Settings field that's a genuine cross-device preference rather
+      // than this device's own connection state (driveConnected/
+      // driveFileId/introSeen never come from remote). Lets syncNow()
+      // last-write-win on this one field without needing a full
+      // record/tombstone shape for the rest of Settings.
+      budgetRingColorsUpdatedAt: null,
     },
     categories: SEED_CATEGORIES.map((c) => ({
       id: c.id, name: c.name, direction: c.direction, hue: c.hue, color: hueColor(c.hue),
@@ -1368,6 +1375,21 @@ async function syncNow(showToast) {
   state.entries = entryMerge.merged;
   state.categories = catMerge.merged;
   state.recurring = recMerge.merged;
+
+  // Settings isn't a tombstoned record collection, so mergeRecords doesn't
+  // apply — but budgetRingColors is still a real cross-device preference
+  // (unlike driveConnected/driveFileId/introSeen, which describe THIS
+  // device's own state and must never come from remote). Same last-write-
+  // wins rule as same-record content conflicts elsewhere (Sync design
+  // decisions), compared by its own single timestamp instead of a
+  // per-record one.
+  const localColorsAt = state.settings.budgetRingColorsUpdatedAt || "";
+  const remoteColorsAt = (remote.settings && remote.settings.budgetRingColorsUpdatedAt) || "";
+  if (remote.settings && remoteColorsAt > localColorsAt) {
+    state.settings.budgetRingColors = remote.settings.budgetRingColors;
+    state.settings.budgetRingColorsUpdatedAt = remoteColorsAt;
+  }
+
   state.updatedAt = nowIso();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); // safe local write, before any network risk
 
@@ -1641,6 +1663,7 @@ function setBudgetRingColor(key, hue, hex) {
   const colors = Object.assign({}, state.settings.budgetRingColors);
   colors[key] = { hue, color: hex };
   state.settings.budgetRingColors = colors;
+  state.settings.budgetRingColorsUpdatedAt = nowIso();
   saveState();
   openBcPickerKey = null;
   renderAll();
@@ -1678,6 +1701,7 @@ function initBudgetView() {
       const colors = Object.assign({}, state.settings.budgetRingColors);
       colors[key] = null;
       state.settings.budgetRingColors = colors;
+      state.settings.budgetRingColorsUpdatedAt = nowIso();
       saveState();
       openBcPickerKey = null;
       renderAll();

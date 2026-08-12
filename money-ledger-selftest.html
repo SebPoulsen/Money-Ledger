@@ -1177,6 +1177,56 @@ async function runTests(H,d){
       digits(amt.value)==="6250" && amt.value.toLowerCase().indexOf("kr")!==-1);
   })();
 
+  /* 55. REGRESSION (2026-08-12): budgetRingColors now syncs across
+     devices via its own timestamp. Settings has no per-record tombstone
+     shape, so this can't reuse mergeRecords — previously nothing in
+     syncNow() ever read remote.settings at all, which was the actual
+     reported bug (a colour set on one device stayed ink on another).
+     driveConnected/driveFileId/introSeen describe THIS device's own
+     state and must stay untouched by a remote pull regardless. */
+  await (async function(){
+    H.resetFakeDrive();
+    // Each brand-new device id triggers resetState() on its first
+    // useDevice() call, which ALSO wipes FAKE_DRIVE (see makeDeviceSwitcher
+    // above) — so both devices need a throwaway first appearance+save
+    // *before* either one pushes anything real, or B's first-ever
+    // appearance below would silently erase A's already-pushed colours.
+    // Every subsequent useDevice() call for an already-seen id restores
+    // via setState(), which never touches FAKE_DRIVE.
+    useDevice("colors-A").save();
+    useDevice("colors-B").save();
+
+    useDevice("colors-A");
+    var sA=H.getState();
+    sA.settings.budgetRingColors={income:{hue:0.33,color:"#4E7040"},net:null,expenses:null};
+    sA.settings.budgetRingColorsUpdatedAt="2026-08-12T10:00:00.000Z";
+    H.setState(sA);
+    var fileId=await H.resolveDriveFileId();
+    H.testConnectDrive(fileId);
+    await H.syncNow(false);
+
+    useDevice("colors-B");
+    var fid=await H.resolveDriveFileId();
+    H.testConnectDrive(fid);
+    await H.syncNow(false); // B never set its own colours — should adopt A's newer ones
+    var bColors=H.getState().settings.budgetRingColors;
+    assert("REGRESSION a ring colour set on one device reaches another device via sync",
+      bColors.income && bColors.income.color==="#4E7040");
+    assert("device B's own driveConnected/driveFileId stay device-local, untouched by the settings sync",
+      H.getState().settings.driveConnected===true && H.getState().settings.driveFileId===fid);
+
+    // B now sets its OWN newer colour — a later sync must not let A's
+    // older colour clobber it back (the same last-write-wins direction
+    // as everything else in this file, just for a single-field compare).
+    var sB=H.getState();
+    sB.settings.budgetRingColors={income:{hue:0.33,color:"#4E7040"},net:{hue:0.6,color:"#3A6E70"},expenses:null};
+    sB.settings.budgetRingColorsUpdatedAt="2026-08-12T11:00:00.000Z"; // an hour after A's
+    H.setState(sB);
+    await H.syncNow(false);
+    assert("a newer local colour change survives a sync against an older remote value",
+      H.getState().settings.budgetRingColors.net && H.getState().settings.budgetRingColors.net.color==="#3A6E70");
+  })();
+
   return results;
 }
 })();

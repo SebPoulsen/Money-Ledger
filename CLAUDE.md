@@ -462,6 +462,27 @@ patterns doesn't mean re-litigating what those patterns are applied to.
 
 ## General fixes (2026-08-12)
 
+**Budget ring colours now actually sync across devices.** Reported by
+Sebastian: colours set on his laptop still showed as plain ink on his
+phone. Investigated and confirmed real, not a loading issue —
+`syncNow()` merged `entries`/`categories`/`recurring` but never touched
+`state.settings` at all; nothing ever read `remote.settings` back into
+local state, so a device's own settings simply never changed via sync,
+regardless of what any other device had pushed. Fixed by adding a
+`budgetRingColorsUpdatedAt` timestamp (bumped only when
+`budgetRingColors` itself changes) and comparing it in `syncNow()` —
+whichever side is newer wins, same last-write-wins rule as same-record
+content conflicts elsewhere. **Deliberately scoped to `budgetRingColors`
+only** — `currency` was left untouched (still device-local, unsynced,
+matching existing behaviour) since silently changing a device's currency
+via sync is a bigger, unrequested behavioural change Sebastian didn't
+ask for; `driveConnected`/`driveFileId`/`introSeen` must never come from
+remote at all, since they describe *this device's* own connection state,
+not a shared preference — syncing those would be actively wrong (e.g.
+one device's Drive file id overwriting another's independently-resolved
+one). See the data model's `Settings` entry for the full field-by-field
+sync/no-sync breakdown.
+
 **The toast's Undo button now gets hidden again when the toast dismisses.**
 Found by Sebastian as "a weird very small black box sticking" under the
 browser chrome. Root cause: `#toastUndo` gets `hidden = false` whenever an
@@ -610,7 +631,30 @@ failing/total summary.
   delete/import/clear-month flows don't hang a headless run waiting for a
   dialog no one will click.
 
-**What it covers (152 tests as of 2026-08-12, up from 23):**
+**Testing gotcha: `useDevice(id)`'s first-ever call to a new device id
+wipes `FAKE_DRIVE`, not just local state (2026-08-12).** `resetState()`
+(what `useDevice` calls internally the first time it sees a given id)
+resets `FAKE_DRIVE = {}` alongside the local state — correct for the
+*very first* device in a test, since the drive should start empty, but a
+trap the second time: if device A has already pushed something and
+device B then appears for the *first* time, B's own `resetState()`
+silently erases A's pushed data before B ever reads it, since
+`useDevice` can't tell "first appearance, drive should be empty" apart
+from "first appearance, but another device already has real data on it."
+Existing multi-device tests (11–16) don't hit this because both devices'
+first appearances happen before *either* has pushed anything meaningful,
+with any real data-carrying push always coming from a *second*
+appearance (restored via `setState`, which never touches `FAKE_DRIVE`).
+Bit the `budgetRingColorsUpdatedAt` sync test the first time it was
+written, for exactly this reason — traced with a standalone debug page
+logging state at each step (see "Verification technique" below) after
+staring at the sync code itself found nothing wrong there. **The safe
+pattern: call `useDevice(id).save()` once for every device involved,
+establishing each one's "born" snapshot, before any of them touch Drive
+for real** — mirrors what tests 11–16 already do, just made explicit
+here since it's easy to get this exact ordering wrong by accident.
+
+**What it covers (155 tests as of 2026-08-12, up from 23):**
 - **Sync/merge** (the original 23): the `mergeRecords` algorithm directly
   (only-local, only-remote, both-edited, delete-vs-edit,
   identical/skewed/ambiguous timestamps, empty sides, seed-category id
@@ -619,8 +663,11 @@ failing/total summary.
   devices in one iframe by snapshotting and restoring state between them.
   Includes a regression test for each of 2026-08-03/04's five bugs (silent
   push overwrite, silent pull overwrite, undelete, edit duplication,
-  category duplication) and one longer test walking the full manual repro
-  end to end.
+  category duplication), one longer test walking the full manual repro
+  end to end, and a regression test for `budgetRingColors` actually
+  syncing (2026-08-12) — a colour set on one device reaching another, and
+  device-local Settings fields (`driveConnected`/`driveFileId`) staying
+  untouched by that same sync.
 - **Money math:** `parseAmountToMinor` (rounding, rejection of
   zero/negative/blank/non-numeric input, no float drift across repeated
   parses), `formatMoney`/`formatCompact` (decimal-hiding on whole amounts,
@@ -759,8 +806,14 @@ Recurring {                // backlog #3, named to match Entry.recurringId
 
 Settings {
   currency: string         // ISO 4217, e.g. "DKK", "USD" — chosen on first launch, changeable after
-  driveConnected: boolean
-  driveFileId: string | null   // the Drive file this device is synced to, once connected
+  introSeen: boolean       // this device's own — never synced, a new device should see its own intro
+  driveConnected: boolean  // this device's own connection state — never synced
+  driveFileId: string | null   // the Drive file this device is synced to — never synced
+  budgetRingColors: { income, net, expenses: {hue, color} | null }  // the one Settings
+                            // field that IS a cross-device preference — see budgetRingColorsUpdatedAt
+  budgetRingColorsUpdatedAt: string | null   // bumped only when budgetRingColors changes;
+                            // syncNow() last-write-wins on this single field using it,
+                            // since Settings has no per-record tombstone shape to merge by
 }
 
 State (top-level, the whole localStorage/Drive-file blob) {
