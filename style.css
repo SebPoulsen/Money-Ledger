@@ -138,6 +138,9 @@ button{cursor:pointer}
    reuses .register/.dayhead so recurring items grouped by day read as the
    same rhythm as entries grouped by day in the real register. */
 .recurringview{margin-top:18px}
+/* same gap as .cols' margin-top on the front page — the distance from
+   quick-add down to the register box */
+.recurring-items-label{margin-top:26px}
 .recrow{display:flex;align-items:center;gap:8px;padding:9px 12px 9px 22px;border-bottom:1px solid var(--rule-soft)}
 .recrow:last-child{border-bottom:0}
 .recrow .dot{width:11px;height:11px;flex:none;border:1px solid rgba(0,0,0,.3)}
