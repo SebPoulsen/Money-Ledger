@@ -372,11 +372,15 @@ function toast(msg, undoFn) {
     btn.onclick = () => {
       undoFn();
       el.classList.remove("on", "compact");
+      btn.hidden = true; // otherwise this stays in the DOM (just off-screen) forever after the first undo toast
       clearTimeout(toast._compactTimer);
       clearTimeout(toast._dismissTimer);
     };
     toast._compactTimer = setTimeout(() => el.classList.add("compact"), UNDO_FULL_MS);
-    toast._dismissTimer = setTimeout(() => el.classList.remove("on", "compact"), UNDO_FULL_MS + UNDO_COMPACT_MS);
+    toast._dismissTimer = setTimeout(() => {
+      el.classList.remove("on", "compact");
+      btn.hidden = true;
+    }, UNDO_FULL_MS + UNDO_COMPACT_MS);
   } else {
     btn.hidden = true;
     btn.onclick = null;
@@ -921,7 +925,14 @@ function renderCategoryRail() {
 
     const nmInput = row.querySelector(".nm");
     nmInput.addEventListener("change", () => {
-      editCategory(c.id, { name: nmInput.value.trim() || c.name });
+      const newName = nmInput.value.trim() || c.name;
+      const dup = categoriesFor(c.direction).some((other) => other.id !== c.id && other.name.toLowerCase() === newName.toLowerCase());
+      if (dup) {
+        toast(`"${newName}" already exists`);
+        nmInput.value = c.name;
+        return;
+      }
+      editCategory(c.id, { name: newName });
       saveState();
       renderAll();
     });
@@ -999,6 +1010,15 @@ function initCategoryRail() {
     const input = document.getElementById("newCatName");
     const name = input.value.trim();
     if (!name) return;
+    // Blocks both a deliberate duplicate and an accidental double-tap/
+    // double-submit on "Add" — the second submit lands after the first
+    // has already run (JS event handlers are synchronous), so by the
+    // time this check runs on the second call, the first category is
+    // already in state.categories and gets caught here.
+    if (categoriesFor(railDir).some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+      toast(`"${name}" already exists`);
+      return;
+    }
     createCategory({ name, direction: railDir, hue: Math.random() });
     saveState();
     input.value = "";
@@ -1474,6 +1494,17 @@ function initFab() {
   });
 }
 
+// The logo/wordmark doubles as a quick way back to the main register from
+// Budget or Recurring — calling both is harmless even if only one (or
+// neither) is currently open; each show*View(false) only touches its own
+// section plus quickadd/mainCols.
+function initHomeLink() {
+  document.getElementById("homeLink").addEventListener("click", () => {
+    showBudgetView(false);
+    showRecurringView(false);
+  });
+}
+
 // ---------- render all ----------
 
 // ---------- rendering: budget ----------
@@ -1884,6 +1915,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initBudgetView();
   initRecurringView();
   initFab();
+  initHomeLink();
   if (state.settings.currency) renderAll();
   // Real mode only — TEST_MODE drives dueRecurring/applyDueRecurring
   // explicitly via the hook, so a sync test's resetState() never gets a

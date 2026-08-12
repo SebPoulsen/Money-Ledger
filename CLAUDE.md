@@ -444,6 +444,51 @@ that's a separate, already-settled decision (see the "one screen, split
 by toggle" entry above); borrowing the register's visual/interaction
 patterns doesn't mean re-litigating what those patterns are applied to.
 
+## General fixes (2026-08-12)
+
+**The toast's Undo button now gets hidden again when the toast dismisses.**
+Found by Sebastian as "a weird very small black box sticking" under the
+browser chrome. Root cause: `#toastUndo` gets `hidden = false` whenever an
+undoable toast fires (delete entry, delete category, clear month) but
+nothing ever set it back to `hidden = true` — not on the undo-click path,
+not on the natural timeout. So after the *first* undoable action anywhere
+in the app, that button stayed permanently un-hidden, just translated
+off-screen along with the rest of `.toast`. `.toast`'s hidden position is
+`translateY(-140%)` — a percentage of the box's *own* height, not a fixed
+distance — so a permanently-taller box (now always including the Undo
+button) wasn't pushed quite far enough off-screen, leaving a sliver of
+the ink-black background visible. Fixed both ends: `btn.hidden = true` is
+now set on both dismiss paths (timeout and undo-click), and `.toast`'s
+resting state also gets `opacity:0` + `pointer-events:none` so any future
+content-size growth can't reproduce a visible sliver even if the
+transform math is ever off again.
+
+**The "Money Ledger" logo is now a way back to the register from
+Budget/Recurring.** Wrapped in a `<button>` inside the existing `<h1>`
+(valid nesting — button is phrasing content) with a `.wordmark-btn` reset
+so it's visually identical to the plain heading it replaces. Calls both
+`showBudgetView(false)` and `showRecurringView(false)`, which is safe
+regardless of which screen (if either) is currently open.
+
+**Two categories can no longer share a name within the same direction.**
+Reported as duplicate categories showing up on Sebastian's phone.
+Investigated rather than assumed: `createCategory`/the rename handler had
+*no* duplicate-name check at all, and the add-category form had no
+double-submit protection — a double-tap on "Add" (easy on mobile with no
+loading state on the button) would create two distinct-id records with
+the same name before the first submission's re-render even happened, and
+since JS event handlers run synchronously, this reliably reproduces with
+just two fast taps. Added a case-insensitive, same-direction duplicate
+check to both the add-category form and the rename handler — blocked
+attempts show a toast and (for rename) revert the input, they don't fail
+silently. **This does not retroactively clean up any duplicates already
+sitting in Sebastian's real synced data** — old duplicates predating this
+fix (or predating the 2026-08-03/04 sync-merge fixes, if that's actually
+where these came from — hard rule 6 was written *because* of exactly this
+class of bug) are still there and weren't touched, since deleting/merging
+real category data isn't something to do silently without Sebastian
+confirming which records are the actual duplicates first.
+
 ## Testing before you claim it works
 
 There is an automated self-test suite — `money-ledger-selftest.html`,
@@ -522,7 +567,7 @@ failing/total summary.
   delete/import/clear-month flows don't hang a headless run waiting for a
   dialog no one will click.
 
-**What it covers (134 tests as of 2026-08-12, up from 23):**
+**What it covers (147 tests as of 2026-08-12, up from 23):**
 - **Sync/merge** (the original 23): the `mergeRecords` algorithm directly
   (only-local, only-remote, both-edited, delete-vs-edit,
   identical/skewed/ambiguous timestamps, empty sides, seed-category id

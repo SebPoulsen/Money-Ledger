@@ -1038,6 +1038,116 @@ async function runTests(H,d){
       !d.querySelector('.recrow[data-id="'+rec.id+'"]'));
   })();
 
+  /* ============ 2026-08-12 fixes ============ */
+
+  /* 50. REGRESSION duplicate categories: creating one with a name that
+     already exists (same direction) is blocked, through the real form */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.renderAll();
+    var before=H.getState().categories.filter(function(c){return !c.deleted;}).length;
+    var nameInput=d.getElementById("newCatName");
+    nameInput.value="Groceries"; // seed-groceries already exists, same case
+    d.getElementById("addCatForm").dispatchEvent(new (d.defaultView.Event)("submit",{cancelable:true}));
+    assert("REGRESSION submitting the add-category form with a name that already exists creates nothing",
+      H.getState().categories.filter(function(c){return !c.deleted;}).length===before);
+
+    nameInput.value="groceries"; // case-insensitive match
+    d.getElementById("addCatForm").dispatchEvent(new (d.defaultView.Event)("submit",{cancelable:true}));
+    assert("REGRESSION the duplicate-name check is case-insensitive",
+      H.getState().categories.filter(function(c){return !c.deleted;}).length===before);
+
+    assert("REGRESSION this also catches a rapid double-submit (two synchronous submits of the same name)",
+      (function(){
+        var n=H.getState().categories.filter(function(c){return !c.deleted;}).length;
+        nameInput.value="Pet supplies";
+        d.getElementById("addCatForm").dispatchEvent(new (d.defaultView.Event)("submit",{cancelable:true}));
+        nameInput.value="Pet supplies";
+        d.getElementById("addCatForm").dispatchEvent(new (d.defaultView.Event)("submit",{cancelable:true}));
+        return H.getState().categories.filter(function(c){return !c.deleted;}).length===n+1;
+      })());
+  })();
+  (function(){
+    // same name, different direction: not a conflict
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.renderAll();
+    var before=H.getState().categories.filter(function(c){return !c.deleted;}).length;
+    d.getElementById("newCatName").value="Salary"; // seed-salary is income; railDir defaults to expense
+    d.getElementById("addCatForm").dispatchEvent(new (d.defaultView.Event)("submit",{cancelable:true}));
+    assert("the same name in a DIFFERENT direction is not a duplicate — expense and income are separate namespaces",
+      H.getState().categories.filter(function(c){return !c.deleted;}).length===before+1);
+  })();
+
+  /* 51. REGRESSION renaming a category to match another existing one
+     (same direction) is blocked and the input reverts */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.renderAll();
+    var row=d.querySelector('.cat[data-id="seed-rent"] .nm');
+    row.value="Groceries";
+    fireChange(row);
+    assert("REGRESSION renaming a category to another existing category's name (same direction) is blocked",
+      H.getState().categories.find(function(c){return c.id==="seed-rent";}).name==="Rent");
+    assert("REGRESSION the rename input reverts to the original name after a blocked rename",
+      row.value==="Rent");
+  })();
+  (function(){
+    // renaming to its own current name is a no-op, not a false conflict
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.renderAll();
+    var row=d.querySelector('.cat[data-id="seed-rent"] .nm');
+    row.value="Rent";
+    fireChange(row);
+    assert("renaming a category to its own unchanged name is not treated as a duplicate",
+      H.getState().categories.find(function(c){return c.id==="seed-rent";}).name==="Rent");
+  })();
+
+  /* 52. REGRESSION the toast's Undo button is hidden again once the toast
+     fully dismisses, not left in the DOM (just off-screen) forever after
+     the first undo-capable toast — the actual cause of a stray sliver of
+     the toast box staying visible under the browser chrome. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var entry=H.createEntry({date:"2026-08-01",amountMinor:1000,direction:"expense",categoryId:"seed-groceries",note:""});
+    H.renderAll();
+    // deleteEntry() (the hook fn) doesn't fire a toast on its own — the
+    // real toast(...) call lives in the edit sheet's delete handler, so
+    // drive it through the actual DOM to exercise that real call site.
+    d.querySelector('.entryrow[data-id="'+entry.id+'"]').click();
+    d.getElementById("editDelete").click();
+    var btn=d.getElementById("toastUndo");
+    assert("the Undo button is shown while an undoable toast is active",
+      btn.hidden===false);
+    btn.click(); // triggers the undo path, which must also re-hide the button
+    assert("REGRESSION clicking Undo hides the button again, not leaving it in the DOM forever",
+      btn.hidden===true);
+  })();
+
+  /* 53. the logo doubles as a way back to the register from Budget/Recurring */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.renderAll();
+    d.getElementById("budgetToggle").click();
+    assert("clicking Budget shows the budget view and hides the main columns",
+      !d.getElementById("budgetView").hidden && d.getElementById("mainCols").hidden);
+    d.getElementById("homeLink").click();
+    assert("REGRESSION clicking the logo from the Budget screen returns to the register",
+      d.getElementById("budgetView").hidden && !d.getElementById("mainCols").hidden);
+
+    d.getElementById("recurringToggle").click();
+    assert("clicking Recurring shows the recurring view and hides the main columns",
+      !d.getElementById("recurringView").hidden && d.getElementById("mainCols").hidden);
+    d.getElementById("homeLink").click();
+    assert("REGRESSION clicking the logo from the Recurring screen returns to the register",
+      d.getElementById("recurringView").hidden && !d.getElementById("mainCols").hidden);
+  })();
+
   return results;
 }
 })();

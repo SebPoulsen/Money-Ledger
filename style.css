@@ -24,6 +24,9 @@ button{cursor:pointer}
 .masthead{border-top:3px solid var(--ink);border-bottom:1px solid var(--ink);padding:14px 0 12px;display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px 24px}
 .wordmark{font-size:clamp(26px,4.4vw,44px);font-weight:800;font-variation-settings:"wdth" 118;letter-spacing:-.02em;line-height:.9;text-transform:uppercase;margin:0}
 .wordmark span{display:block;font-size:.28em;font-weight:500;font-variation-settings:"wdth" 100;letter-spacing:.22em;color:var(--muted);margin-top:9px}
+/* the logo doubles as a "back to register" shortcut — reset to invisible
+   button chrome so it reads exactly like the plain heading it replaces */
+.wordmark-btn{display:block;border:0;background:transparent;padding:0;margin:0;font:inherit;color:inherit;text-align:left;cursor:pointer}
 .monthnav{display:flex;align-items:center;gap:8px;margin-left:auto}
 .monthlabel{font-family:var(--mono);font-size:13px;padding:7px 9px;min-width:150px;text-align:center;border:1px solid var(--rule)}
 .stepper{width:34px;height:34px;border:1px solid var(--ink);background:transparent;font-size:15px;line-height:1;display:grid;place-items:center;flex:none}
@@ -222,11 +225,15 @@ button{cursor:pointer}
 .status.off i{background:var(--none)}
 
 /* toast, scrim, sheet, fields — carried over as-is */
-.toast{position:fixed;left:50%;top:16px;transform:translateX(-50%) translateY(-140%);z-index:60;
+.toast{position:fixed;left:50%;top:16px;transform:translateX(-50%) translateY(-140%);opacity:0;z-index:60;
   background:var(--ink);color:var(--paper);border:1px solid var(--ink);padding:12px 14px;
   display:flex;align-items:center;gap:14px;font-family:var(--mono);font-size:12px;
-  transition:transform .22s ease;max-width:calc(100vw - 32px)}
-.toast.on{transform:translateX(-50%) translateY(0)}
+  transition:transform .22s ease,opacity .22s ease;max-width:calc(100vw - 32px);pointer-events:none}
+/* opacity:0 on the resting state is the actual guarantee of invisibility —
+   the transform alone is a percentage of the box's own height, so a taller
+   box (e.g. once the Undo button was visible at least once) could leave a
+   sliver of the off-screen box peeking under the browser chrome. */
+.toast.on{transform:translateX(-50%) translateY(0);opacity:1;pointer-events:auto}
 /* second phase of an undoable toast: message gone, just the Undo button
    left, so it doesn't keep claiming attention but stays reachable */
 .toast.compact .msg{display:none}
