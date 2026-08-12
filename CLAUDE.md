@@ -269,6 +269,22 @@ for space inside it.
   reliably reflect in a screenshot, but an iframe's own width always
   drives its internal viewport correctly, which is why that's the
   technique to reach for first when a real device isn't at hand.
+- **The triangle grid's rings were misaligned on phone width, fixed
+  2026-08-12.** Sebastian noticed Income's ring sitting lower than
+  Expenses' ring. Cause: `.budgetcircles` inherits `align-items:center`
+  from the desktop rule (never overridden in the mobile grid), and
+  Expenses' box is taller than Income's whenever a budget is set — it has
+  an extra `.bcircle-capsub` caption line ("· Budget X") that Income never
+  gets. Centering the shorter Income box within a grid row tall enough
+  for Expenses' extra line pushed Income's ring down relative to
+  Expenses'. Fixed with `align-items:start` inside the mobile media query
+  only (top-align both rings regardless of caption height difference) —
+  desktop still isn't touched, same as the rest of this entry. Also
+  tightened the grid's row-gap (22px → 14px) per Sebastian's ask to bring
+  Income/Expenses closer to Net. Verified on screen with a budget actually
+  set on an expense category, since the misalignment only shows up once
+  Expenses' extra caption line exists — an empty-budget screenshot
+  wouldn't have caught it.
 
 **Net's predicted line was removed entirely (2026-08-11, revised same
 day).** The circle rebuild above shipped with "NET · PREDICTED 2,700" as a

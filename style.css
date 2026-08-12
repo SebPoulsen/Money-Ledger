@@ -137,8 +137,12 @@ button{cursor:pointer}
   /* Phone only — Net (the larger, derived circle) on top, Income and
      Expenses side by side underneath it, reading as a triangle. Desktop
      stays the untouched horizontal row above (hard requirement) — this
-     grid only exists inside this media query. */
-  .budgetcircles{display:grid;grid-template-columns:1fr 1fr;grid-template-areas:"net net" "income expenses";justify-items:center;gap:22px 12px}
+     grid only exists inside this media query. align-items:start (not the
+     inherited center) so the two rings line up at the same height
+     regardless of Expenses having an extra "· Budget X" caption line that
+     Income never does — centering the shorter Income box within a row
+     tall enough for Expenses' extra line was pushing Income's ring down. */
+  .budgetcircles{display:grid;grid-template-columns:1fr 1fr;grid-template-areas:"net net" "income expenses";justify-items:center;align-items:start;gap:14px 12px}
   .bcircle-net{grid-area:net}
   .bcircle-income{grid-area:income}
   .bcircle-expenses{grid-area:expenses}
