@@ -505,7 +505,11 @@ acting on an already-detached node (harmless no-op); when nothing
 changed, `change` never fires at all, and `blur` on the still-live node
 is the *only* thing that restores the formatting. Relying on `change`
 alone would leave the field stuck showing the plain number after a
-focus-then-blur-without-editing.
+focus-then-blur-without-editing. Reused verbatim for the recurring
+amount field (`.rec-amount`) the same day, once Sebastian asked for the
+same treatment there — same `type="text"` swap, same
+focus/blur/change trio, same reasoning throughout.
+
 ## Testing before you claim it works
 
 There is an automated self-test suite — `money-ledger-selftest.html`,
@@ -584,7 +588,7 @@ failing/total summary.
   delete/import/clear-month flows don't hang a headless run waiting for a
   dialog no one will click.
 
-**What it covers (149 tests as of 2026-08-12, up from 23):**
+**What it covers (152 tests as of 2026-08-12, up from 23):**
 - **Sync/merge** (the original 23): the `mergeRecords` algorithm directly
   (only-local, only-remote, both-edited, delete-vs-edit,
   identical/skewed/ambiguous timestamps, empty sides, seed-category id

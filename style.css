@@ -157,7 +157,7 @@ button{cursor:pointer}
 .recrow .dot{width:11px;height:11px;flex:none;border:1px solid rgba(0,0,0,.3)}
 .recrow input.rec-name{flex:1;min-width:0;font-size:13px;background:transparent;border:0;padding:2px 0}
 .recrow input.rec-name:focus{outline:0;border-bottom:1px solid var(--ink)}
-.recrow input.rec-amount{width:88px;flex:none;font-family:var(--mono);text-align:right;border:1px solid var(--rule);background:transparent;padding:7px 8px;font-size:13px;border-radius:0}
+.recrow input.rec-amount{width:118px;flex:none;font-family:var(--mono);text-align:right;border:1px solid var(--rule);background:transparent;padding:7px 8px;font-size:13px;border-radius:0}
 .recrow select.rec-category{flex:none;max-width:130px;border:1px solid var(--rule);background:var(--paper);padding:7px 8px;font-size:12px;border-radius:0}
 .recrow .rec-daywrap{display:flex;align-items:center;gap:4px;flex:none;font-family:var(--mono);font-size:10px;color:var(--muted);text-transform:uppercase}
 .recrow select.rec-day{width:64px;flex:none;font-family:var(--mono);text-align:center;border:1px solid var(--rule);background:var(--paper);padding:7px 4px;font-size:13px;border-radius:0}

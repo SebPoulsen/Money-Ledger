@@ -1762,7 +1762,7 @@ function renderRecurringView() {
       row.innerHTML = `
         <span class="dot" style="background:${cat ? cat.color : "var(--none)"}"></span>
         <input class="rec-name" value="${escapeHtml(r.name)}">
-        <input type="number" class="rec-amount" inputmode="decimal" step="1" min="0" value="${amountInputValue(r.amountMinor)}">
+        <input type="text" class="rec-amount" inputmode="decimal" value="${formatMoney(r.amountMinor, currency)}">
         <select class="rec-category"></select>
         <span class="rec-daywrap">Day <select class="rec-day"></select></span>
         <button type="button" class="del" title="Delete recurring item">×</button>
@@ -1777,7 +1777,18 @@ function renderRecurringView() {
         saveState();
         renderAll();
       });
-      row.querySelector(".rec-amount").addEventListener("change", (e) => {
+      const amountInput = row.querySelector(".rec-amount");
+      // Same rest-formatted/focus-plain pattern as the budget field: see
+      // CLAUDE.md "General fixes" for why blur (not change) is what
+      // restores the formatting.
+      amountInput.addEventListener("focus", (e) => {
+        e.target.value = amountInputValue(r.amountMinor);
+        e.target.select();
+      });
+      amountInput.addEventListener("blur", (e) => {
+        e.target.value = formatMoney(r.amountMinor, currency);
+      });
+      amountInput.addEventListener("change", (e) => {
         const minor = parseAmountToMinor(e.target.value);
         if (minor == null) { e.target.value = amountInputValue(r.amountMinor); return; }
         editRecurring(r.id, { amountMinor: minor });

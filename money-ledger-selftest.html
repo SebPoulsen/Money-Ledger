@@ -1158,6 +1158,25 @@ async function runTests(H,d){
       d.getElementById("recurringView").hidden && !d.getElementById("mainCols").hidden);
   })();
 
+  /* 54. the recurring amount field gets the same rest-formatted/
+     focus-plain treatment as the budget field */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var rec=H.createRecurring({name:"Rent",amountMinor:625000,direction:"expense",categoryId:"seed-rent",dayOfMonth:1}); // 6250.00, whole
+    H.setRecurringDir("expense");
+    H.renderAll();
+    var amt=d.querySelector('.recrow[data-id="'+rec.id+'"] .rec-amount');
+    assert("the recurring amount field shows thousands separator + currency at rest",
+      digits(amt.value)==="6250" && amt.value.toLowerCase().indexOf("kr")!==-1);
+    amt.dispatchEvent(new (d.defaultView.Event)("focus"));
+    assert("focusing the recurring amount field swaps to the plain editable number",
+      amt.value==="6250");
+    amt.dispatchEvent(new (d.defaultView.Event)("blur"));
+    assert("blurring the recurring amount field without editing restores the pretty format",
+      digits(amt.value)==="6250" && amt.value.toLowerCase().indexOf("kr")!==-1);
+  })();
+
   return results;
 }
 })();
