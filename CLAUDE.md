@@ -326,16 +326,33 @@ already used for `Category.budgetMinor` when that field was added to
 already-live category records, since `undefined` and `null` are handled
 identically by the `!= null` checks throughout.
 
-**Amounts hide decimals when they're whole, everywhere (2026-08-11).**
-`formatMoney` now passes `minimumFractionDigits: 0` when the amount has no
-minor-unit remainder, so `4,250 kr.` displays instead of `4,250.00 kr.` —
-applies to the register, the summary panel, the category rail, and the
-budget screen, since all four already route through the one shared
-formatter. Editable input fields (the edit-entry amount field, the
-per-category budget input) still pre-fill with a fixed two-decimal string
-via `.toFixed(2)` — deliberately unchanged, since a field you're about to
-type into benefits from a stable, predictable format more than a
-display-only figure does.
+**Amounts hide decimals when they're whole, everywhere, including editable
+fields (2026-08-11, revised 2026-08-12).** `formatMoney` passes
+`minimumFractionDigits: 0` when the amount has no minor-unit remainder, so
+`4,250 kr.` displays instead of `4,250.00 kr.` — applies to the register,
+the summary panel, the category rail, and the budget screen. Editable
+input fields (the edit-entry amount field, the per-category budget input,
+the recurring amount field) originally kept a fixed two-decimal string via
+`.toFixed(2)` on purpose, reasoning that a field you're about to type into
+benefits from a stable, predictable format more than a display-only
+figure does. Reversed the next day after direct feedback: showing `.00`
+on an amount that's never had decimals just reads as wrong, not stable —
+the "predictability" argument didn't hold up against actually looking at
+it. Now uses a shared `amountInputValue(minor)` helper (hide decimals
+when whole, keep them when genuinely fractional — e.g. `4000` but
+`1.99`), used by all three editable amount fields instead of each calling
+`.toFixed(2)` separately.
+
+**Budget input selects its whole value on focus (2026-08-12).** Tapping
+into the per-category budget field used to drop the cursor wherever the
+tap landed within the (right-aligned) value, so clearing it to type a new
+number meant first manually navigating to the far side. Now the field's
+`focus` handler calls `.select()`, so any tap/click selects the entire
+value — typing immediately overwrites it, and Backspace/Delete clears it
+in one press, no manual cursor navigation needed. Scoped to the budget
+field specifically, since that's the one this was reported against — the
+edit-entry and recurring amount fields weren't asked for and weren't
+changed; revisit if the same friction shows up there too.
 
 ## Recurring design decisions
 
@@ -505,7 +522,7 @@ failing/total summary.
   delete/import/clear-month flows don't hang a headless run waiting for a
   dialog no one will click.
 
-**What it covers (132 tests as of 2026-08-11, up from 23):**
+**What it covers (134 tests as of 2026-08-12, up from 23):**
 - **Sync/merge** (the original 23): the `mergeRecords` algorithm directly
   (only-local, only-remote, both-edited, delete-vs-edit,
   identical/skewed/ambiguous timestamps, empty sides, seed-category id

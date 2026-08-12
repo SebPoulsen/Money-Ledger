@@ -24,11 +24,15 @@ then open this file over <code>http://localhost:8000/…</code> — opening it a
 <code>file://</code> hits a cross-origin error on the iframe.</p>
 <div id="out">Loading index.html…</div>
 
-<iframe id="sandbox" src="index.html?mltest=1"></iframe>
+<iframe id="sandbox"></iframe>
 
 <script>
 (function(){
 "use strict";
+// Cache-busted so a hard reload of this file can never silently test a
+// stale cached copy of index.html/app.js from earlier browsing in the
+// same tab — bit the workflow twice in one session before this was added.
+document.getElementById("sandbox").src = "index.html?mltest=1&cb=" + Date.now();
 var out=document.getElementById("out");
 
 function report(results,error){
@@ -842,12 +846,37 @@ async function runTests(H,d){
     fireChange(row());
     assert("committing a typed budget amount sets the category's budgetMinor",
       H.getState().categories.find(function(c){return c.id==="seed-groceries";}).budgetMinor===400000);
-    assert("after setting a budget, the input re-renders pre-filled with that value",
-      row().value==="4000.00");
+    assert("REGRESSION after setting a whole-number budget, the input re-renders without a trailing .00 (2026-08-12)",
+      row().value==="4000");
     row().value="";
     fireChange(row());
     assert("clearing the budget input removes the category's budget (back to null)",
       H.getState().categories.find(function(c){return c.id==="seed-groceries";}).budgetMinor===null);
+  })();
+
+  /* 43b. REGRESSION: editable amount fields (budget, edit-entry, recurring)
+     hide decimals on a whole amount, same as formatMoney everywhere else —
+     they used to always pre-fill with a fixed two-decimal string on
+     purpose ("stable format to type into"); reversed 2026-08-12 after it
+     read as simply wrong, not stable. Fractional amounts still keep their
+     real decimals — this isn't formatCompact, just decimal-hiding. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.editCategory("seed-rent",{budgetMinor:199}); // 1.99 — fractional, decimals must stay
+    H.renderAll();
+    var row=d.querySelector('#budgetCatList .bcatrow[data-id="seed-rent"] .bcat-budget');
+    assert("REGRESSION a fractional budget amount keeps its real decimals in the input",
+      row.value==="1.99");
+  })();
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var entry=H.createEntry({date:"2026-08-15",amountMinor:425000,direction:"expense",categoryId:"seed-groceries",note:""}); // 4250.00, whole
+    H.renderAll();
+    d.querySelector('.entryrow[data-id="'+entry.id+'"]').click();
+    assert("REGRESSION the edit sheet's amount field hides decimals on a whole amount",
+      d.getElementById("editAmount").value==="4250");
   })();
 
   /* ============ recurring (backlog #3, 2026-08-11) ============

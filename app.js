@@ -293,6 +293,17 @@ function formatMoney(minor, currency) {
   }).format(minor / 100);
 }
 
+// Pre-fills an editable amount field: no currency, no forced decimals on
+// a whole number ("4000" not "4000.00") — matches formatMoney's decimal-
+// hiding rule. Editable fields originally kept a fixed two-decimal string
+// deliberately (a stable format to type into); reversed 2026-08-12 after
+// it read as simply wrong on whole amounts, in the budget field, the
+// edit-entry sheet, and the recurring amount field alike.
+function amountInputValue(minor) {
+  const isWhole = minor % 100 === 0;
+  return isWhole ? String(minor / 100) : (minor / 100).toFixed(2);
+}
+
 function todayStr() {
   return isoDate(new Date());
 }
@@ -709,7 +720,7 @@ function openEditSheet(entryId) {
   dirBtns.forEach((b) => { b.onclick = () => setDir(b.dataset.dir); });
 
   setDir(e.direction);
-  document.getElementById("editAmount").value = (e.amountMinor / 100).toFixed(2);
+  document.getElementById("editAmount").value = amountInputValue(e.amountMinor);
   document.getElementById("editDate").value = e.date;
   document.getElementById("editNote").value = e.note || "";
   scrim.classList.add("on");
@@ -1546,10 +1557,16 @@ function renderBudgetView() {
       <span class="bcat-name">${escapeHtml(c.name)}</span>
       <span class="bcat-spent">${formatMoney(spent, currency)} spent</span>
       <input type="number" class="bcat-budget" inputmode="decimal" step="1" min="0" placeholder="No budget"
-        value="${c.budgetMinor != null ? (c.budgetMinor / 100).toFixed(2) : ""}">
+        value="${c.budgetMinor != null ? amountInputValue(c.budgetMinor) : ""}">
     `;
     list.appendChild(row);
-    row.querySelector(".bcat-budget").addEventListener("change", (e) => {
+    const budgetInput = row.querySelector(".bcat-budget");
+    // Select the whole value on focus so tapping the field is enough to
+    // start overwriting it — otherwise the cursor lands wherever the tap
+    // happened to land within a right-aligned value, and clearing it means
+    // manually navigating to the far side first.
+    budgetInput.addEventListener("focus", (e) => e.target.select());
+    budgetInput.addEventListener("change", (e) => {
       const budgetMinor = parseAmountToMinor(e.target.value);
       editCategory(c.id, { budgetMinor });
       saveState();
@@ -1700,7 +1717,7 @@ function renderRecurringView() {
       row.innerHTML = `
         <span class="dot" style="background:${cat ? cat.color : "var(--none)"}"></span>
         <input class="rec-name" value="${escapeHtml(r.name)}">
-        <input type="number" class="rec-amount" inputmode="decimal" step="1" min="0" value="${(r.amountMinor / 100).toFixed(2)}">
+        <input type="number" class="rec-amount" inputmode="decimal" step="1" min="0" value="${amountInputValue(r.amountMinor)}">
         <select class="rec-category"></select>
         <span class="rec-daywrap">Day <select class="rec-day"></select></span>
         <button type="button" class="del" title="Delete recurring item">×</button>
@@ -1717,7 +1734,7 @@ function renderRecurringView() {
       });
       row.querySelector(".rec-amount").addEventListener("change", (e) => {
         const minor = parseAmountToMinor(e.target.value);
-        if (minor == null) { e.target.value = (r.amountMinor / 100).toFixed(2); return; }
+        if (minor == null) { e.target.value = amountInputValue(r.amountMinor); return; }
         editRecurring(r.id, { amountMinor: minor });
         saveState();
         renderAll();
