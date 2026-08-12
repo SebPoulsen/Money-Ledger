@@ -487,7 +487,13 @@ fix (or predating the 2026-08-03/04 sync-merge fixes, if that's actually
 where these came from — hard rule 6 was written *because* of exactly this
 class of bug) are still there and weren't touched, since deleting/merging
 real category data isn't something to do silently without Sebastian
-confirming which records are the actual duplicates first.
+confirming which records are the actual duplicates first. **Confirmed
+resolved (2026-08-12):** Sebastian deleted the existing duplicates
+himself on his phone and they stayed deleted through subsequent syncs,
+rather than reappearing — real-device confirmation that both halves hold
+now: the prevention (no new ones form) and the underlying delete/tombstone
+sync path (a real device's delete sticks, doesn't get resurrected by a
+merge). No separate cleanup action was needed beyond the fix itself.
 
 **The budget field shows a pretty formatted value at rest (thousands
 separator + currency, e.g. "3.333 kr."), and the plain editable number on
