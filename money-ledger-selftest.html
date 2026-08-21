@@ -1270,6 +1270,115 @@ async function runTests(H,d){
     // Verified visually instead (see CLAUDE.md).
   })();
 
+  /* 57. REGRESSION (2026-08-21): recurring auto-insert duplicating across
+     devices. Two devices that both already know about the same Recurring
+     record, but have never synced with EACH OTHER since it became due,
+     each independently scan their own local `entries` and (correctly, by
+     the old logic) conclude "not yet inserted this month" — then each
+     creates its own entry. Before the fix, those two entries carry
+     different random ids, so the purely id-keyed mergeRecords has no way
+     to recognize them as the same intended insertion and keeps both. This
+     simulates exactly that: applyDueRecurring() is called independently
+     on each device's own local state, with neither device syncing in
+     between — the real race from CLAUDE.md's "Recurring design
+     decisions", not a contrived shortcut. */
+  await (async function(){
+    // Both devices' "born" snapshots must exist BEFORE either touches
+    // Drive for real (CLAUDE.md's useDevice/FAKE_DRIVE gotcha): a device's
+    // FIRST-ever useDevice() call wipes FAKE_DRIVE via resetState(), so if
+    // B's first appearance happened after A had already pushed the
+    // Recurring record, B's reset would erase it — and the two fake file
+    // ids would still coincidentally match afterward (both regenerated
+    // from fakeDriveNextId=1), silently masking the erasure instead of
+    // failing loudly. Establishing both snapshots up front, before any
+    // real push, sidesteps that entirely.
+    var a=useDevice("recdup-A"); a.save();
+    var b=useDevice("recdup-B"); b.save();
+
+    useDevice("recdup-A");
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var fileId=await H.resolveDriveFileId();
+    H.testConnectDrive(fileId);
+    var rec=H.createRecurring({name:"Claude Pro",amountMinor:8900,direction:"expense",categoryId:"seed-subscriptions",dayOfMonth:1});
+    await H.syncNow(false); // the Recurring record itself is already shared, same as real life
+    a.save();
+
+    useDevice("recdup-B");
+    // currency is deliberately device-local, never synced (CLAUDE.md
+    // Settings field-by-field breakdown) — applyDueRecurring() no-ops
+    // without it (app.js: `if (!state.settings.currency) return;`), so it
+    // must be set independently on B too, or B's half of this race never
+    // actually runs and the test passes vacuously.
+    var sb=H.getState(); sb.settings.currency="DKK"; H.setState(sb);
+    var fid=await H.resolveDriveFileId();
+    H.testConnectDrive(fid);
+    await H.syncNow(false); // adopts the Recurring record; no entry exists yet on either side
+    assert("setup sanity: device B actually adopted the shared Recurring record before either side auto-inserts",
+      H.getState().recurring.some(function(r){return r.id===rec.id && !r.deleted;}));
+    b.save();
+
+    // Device A opens and auto-inserts, but never syncs again before B opens.
+    // applyDueRecurring's own saveState() schedules a real setTimeout-based
+    // debounced push (app.js saveState._drivePush) — harmless on a real
+    // device, but this harness simulates two devices in ONE JS runtime by
+    // swapping a single shared `state`, so a left-running timer from device
+    // A could fire syncNow() later while device B's state is the active
+    // one. Cleared explicitly after each switch so the race being tested
+    // is the real one (independent local due-checks), not a test-rig
+    // artifact of shared globals.
+    useDevice("recdup-A");
+    H.applyDueRecurring();
+    clearTimeout(H.saveState._drivePush);
+    assert("setup sanity: device A actually auto-inserted its own entry before syncing",
+      H.getState().entries.some(function(e){return e.recurringId===rec.id && !e.deleted;}));
+    a.save();
+
+    // Device B opens independently — its local entries still show nothing
+    // for this recurring id this month, so it also auto-inserts.
+    useDevice("recdup-B");
+    H.applyDueRecurring();
+    clearTimeout(H.saveState._drivePush);
+    assert("setup sanity: device B independently auto-inserted its OWN entry too — this is the actual race being tested",
+      H.getState().entries.some(function(e){return e.recurringId===rec.id && !e.deleted;}));
+    b.save();
+
+    // Only now do both sides sync for the first time since inserting.
+    useDevice("recdup-A");
+    await H.syncNow(false);
+    useDevice("recdup-B");
+    await H.syncNow(false); // pulls A's insertion down, merges against B's own
+
+    var live=H.getState().entries.filter(function(e){return !e.deleted && e.recurringId===rec.id;});
+    assert("two devices independently auto-inserting the same recurring item before either syncs converge on exactly one live entry, not two",
+      live.length===1);
+  })();
+
+  /* 58. REGRESSION (2026-08-21): deleting an auto-inserted recurring entry
+     must be sticky for that month. Part of the same fix as test 57 —
+     switching the auto-inserted entry's id from random to deterministic
+     (recurringId+year+month) means applyDueRecurring must check for that
+     id's existence regardless of its deleted state before creating,
+     otherwise re-running it later the same month after a delete would
+     either silently resurrect the entry or push a second record sharing
+     an id already used by a tombstone. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var rec=H.createRecurring({name:"Claude Pro",amountMinor:8900,direction:"expense",categoryId:"seed-subscriptions",dayOfMonth:1});
+    H.applyDueRecurring();
+    var entry=H.getState().entries.find(function(e){return e.recurringId===rec.id;});
+    assert("applyDueRecurring creates the entry this test goes on to delete",
+      !!entry);
+    H.deleteEntry(entry.id);
+    H.applyDueRecurring(); // same real "today", same month — must not resurrect it
+    var live=H.getState().entries.filter(function(e){return !e.deleted && e.recurringId===rec.id;});
+    assert("REGRESSION deleting an auto-inserted recurring entry is sticky for the month — re-running applyDueRecurring doesn't reinsert it",
+      live.length===0);
+    var all=H.getState().entries.filter(function(e){return e.recurringId===rec.id;});
+    assert("no duplicate-id record was pushed either — exactly one entry (tombstoned) exists for this month's insertion",
+      all.length===1);
+  })();
+
   return results;
 }
 })();

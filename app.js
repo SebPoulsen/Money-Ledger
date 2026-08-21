@@ -430,7 +430,7 @@ function initIntro() {
 
 function createEntry(fields) {
   const entry = {
-    id: uid(),
+    id: fields.id || uid(),
     date: fields.date,
     amountMinor: fields.amountMinor,
     direction: fields.direction,
@@ -617,6 +617,25 @@ function dueRecurring(recurringList, entries, today) {
   });
 }
 
+// The auto-inserted entry's id is deterministic — derived from the
+// Recurring record's own id plus the real calendar year/month, not
+// uid()'s random UUID — so two devices that each independently conclude
+// "not yet inserted this month" (because neither has synced the other's
+// insertion yet) end up creating a record under the SAME id instead of
+// two unrelated ones. mergeRecords is keyed purely by id, so this makes
+// it naturally collapse the two into one instead of keeping both as
+// legitimate-looking duplicates (2026-08-21 bug, see CLAUDE.md "Recurring
+// design decisions"). Safe against real uid()-generated ids: every
+// crypto.randomUUID() output is exactly 36 lowercase hex/hyphen
+// characters, and uid()'s fallback path always starts with "id-" — this
+// format's "recurring:" prefix and non-hex letters can't structurally
+// collide with either. Not a new pattern either: SEED_CATEGORIES already
+// uses fixed, non-uid() ids for the same reason (two devices need to
+// independently agree it's "the same" record).
+function recurringInsertId(recurringId, y, m) {
+  return "recurring:" + recurringId + ":" + y + "-" + String(m + 1).padStart(2, "0");
+}
+
 // The side-effecting wrapper: creates the actual entries, saves, toasts,
 // and re-renders. Called once on load (real mode only — TEST_MODE drives
 // dueRecurring/this function explicitly via the hook, never automatically,
@@ -625,19 +644,28 @@ function dueRecurring(recurringList, entries, today) {
 function applyDueRecurring() {
   if (!state.settings.currency) return;
   const today = new Date();
+  const y = today.getFullYear(), m = today.getMonth();
   const due = dueRecurring(state.recurring, state.entries, today);
-  if (due.length === 0) return;
-  const currency = state.settings.currency;
+  const inserted = [];
   due.forEach((r) => {
-    const day = clampDay(today.getFullYear(), today.getMonth(), r.dayOfMonth);
-    const date = isoDate(new Date(today.getFullYear(), today.getMonth(), day));
-    createEntry({ date, amountMinor: r.amountMinor, direction: r.direction, categoryId: r.categoryId, note: r.name, recurringId: r.id });
+    const id = recurringInsertId(r.id, y, m);
+    // Sticky, regardless of deleted state: a record under this exact id
+    // means this month's insertion decision has already been made (by
+    // this device, or by another one already merged in). In particular,
+    // deleting this month's auto-inserted entry must stay deleted — not
+    // silently reinserted the next time this runs the same month.
+    if (state.entries.some((e) => e.id === id)) return;
+    const day = clampDay(y, m, r.dayOfMonth);
+    const date = isoDate(new Date(y, m, day));
+    inserted.push(createEntry({ id, date, amountMinor: r.amountMinor, direction: r.direction, categoryId: r.categoryId, note: r.name, recurringId: r.id }));
   });
+  if (inserted.length === 0) return;
+  const currency = state.settings.currency;
   saveState();
-  if (due.length === 1) {
-    toast(`${due[0].name}, ${formatMoney(due[0].amountMinor, currency)} logged automatically`);
+  if (inserted.length === 1) {
+    toast(`${inserted[0].note}, ${formatMoney(inserted[0].amountMinor, currency)} logged automatically`);
   } else {
-    toast(`${due.length} recurring entries logged automatically`);
+    toast(`${inserted.length} recurring entries logged automatically`);
   }
   renderAll();
 }
@@ -1475,9 +1503,22 @@ function handleDriveButtonClick() {
   }
 }
 
-function initDriveSilentReconnect() {
-  if (TEST_MODE) return; // tests drive sync explicitly via the hook, never real OAuth
-  if (!driveIsConfigured() || !state.settings.driveConnected) return;
+// onSettled (optional) fires exactly once, after the pull attempt settles
+// one way or another — success, failure, or "nothing to do here" — never
+// left permanently unfired. Used by the DOMContentLoaded handler below to
+// defer applyDueRecurring() until after a connected device has pulled
+// whatever another device already synced, closing (for the common,
+// online case) the window where two devices could each independently
+// decide "not yet inserted" before either has seen the other's insertion
+// (2026-08-21, see CLAUDE.md "Recurring design decisions"). Deliberately
+// still calls applyDueRecurring() even when the pull fails or times out —
+// a dead network must not strand a device without its recurring entries;
+// the deterministic insert id (recurringInsertId) is the backstop for
+// whatever race survives this ordering fix.
+function initDriveSilentReconnect(onSettled) {
+  const done = () => { if (onSettled) onSettled(); };
+  if (TEST_MODE) { done(); return; } // tests drive sync explicitly via the hook, never real OAuth
+  if (!driveIsConfigured() || !state.settings.driveConnected) { done(); return; }
 
   const cached = loadDriveTokenCache();
   if (cached) {
@@ -1488,13 +1529,15 @@ function initDriveSilentReconnect() {
     driveAccessToken = cached.token;
     resolveDriveFileId()
       .then(() => syncNow(false))
-      .catch((err) => console.error(err));
+      .catch((err) => console.error(err))
+      .then(done);
     return;
   }
 
   driveTokenClientFor(async (resp) => {
     if (resp.error) {
       renderSettings();
+      done();
       return;
     }
     driveAccessToken = resp.access_token;
@@ -1504,6 +1547,8 @@ function initDriveSilentReconnect() {
       await syncNow(false);
     } catch (err) {
       console.error(err);
+    } finally {
+      done();
     }
   }).requestAccessToken({ prompt: "" });
 }
@@ -1987,7 +2032,7 @@ function exposeTestHook() {
     setView: (y, m) => { viewYear = y; viewMonth = m; renderAll(); },
 
     createRecurring, editRecurring, deleteRecurring, undeleteRecurring,
-    daysInMonth, clampDay, dueRecurring, applyDueRecurring,
+    daysInMonth, clampDay, dueRecurring, applyDueRecurring, recurringInsertId,
     RECURRING_CONTENT_FIELDS,
     getRecurringDir: () => recurringDir,
     setRecurringDir: (dir) => { recurringDir = dir; renderAll(); },
@@ -2009,8 +2054,16 @@ document.addEventListener("DOMContentLoaded", () => {
   if (state.settings.currency) renderAll();
   // Real mode only — TEST_MODE drives dueRecurring/applyDueRecurring
   // explicitly via the hook, so a sync test's resetState() never gets a
-  // surprise auto-inserted entry it didn't ask for.
-  if (!TEST_MODE) applyDueRecurring();
-  initDriveSilentReconnect();
+  // surprise auto-inserted entry it didn't ask for. A Drive-connected
+  // device pulls first, so it sees what another device already synced
+  // before deciding what's due (see initDriveSilentReconnect above); a
+  // local-only device has no other side to race against, so it can
+  // decide immediately.
+  if (!TEST_MODE && state.settings.driveConnected) {
+    initDriveSilentReconnect(applyDueRecurring);
+  } else {
+    if (!TEST_MODE) applyDueRecurring();
+    initDriveSilentReconnect();
+  }
   if (TEST_MODE) exposeTestHook();
 });
