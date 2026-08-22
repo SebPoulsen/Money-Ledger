@@ -1677,13 +1677,17 @@ function renderBudgetView() {
   list.innerHTML = expenseCats.length === 0 ? '<div class="register-empty">No expense categories yet.</div>' : "";
   expenseCats.forEach((c) => {
     const spent = totals.get(c.id) || 0;
+    // Same strictly-greater-than rule as the category rail's bars and the
+    // Expenses circle (Budget design decisions) — hitting the budget
+    // exactly still reads as normal, not over.
+    const over = c.budgetMinor != null && spent > c.budgetMinor;
     const row = document.createElement("div");
     row.className = "bcatrow";
     row.dataset.id = c.id;
     row.innerHTML = `
       <span class="dot" style="background:${c.color}"></span>
       <span class="bcat-name">${escapeHtml(c.name)}</span>
-      <span class="bcat-spent">${formatMoney(spent, currency)} spent</span>
+      <span class="bcat-spent${over ? " over" : ""}">${formatMoney(spent, currency)} spent</span>
       <input type="text" class="bcat-budget" inputmode="decimal" placeholder="No budget"
         value="${c.budgetMinor != null ? formatMoney(c.budgetMinor, currency) : ""}">
     `;

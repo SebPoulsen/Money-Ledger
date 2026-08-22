@@ -126,6 +126,7 @@ button{cursor:pointer}
 .bcatrow .dot{width:11px;height:11px;flex:none;border:1px solid rgba(0,0,0,.3)}
 .bcatrow .bcat-name{flex:1;font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bcatrow .bcat-spent{font-family:var(--mono);font-size:11px;color:var(--muted);flex:none;white-space:nowrap}
+.bcatrow .bcat-spent.over{color:var(--flag)}
 .bcatrow input.bcat-budget{width:130px;flex:none;font-family:var(--mono);text-align:right;border:1px solid var(--rule);background:transparent;padding:7px 9px;font-size:13px;border-radius:0}
 .bcatrow.bcat-totalrow{border-top:2px solid var(--ink);font-weight:700}
 .bcatrow.bcat-totalrow .bcat-name{font-weight:700}

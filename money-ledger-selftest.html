@@ -1454,6 +1454,48 @@ async function runTests(H,d){
       focusCalls===1);
   })();
 
+  /* 61. (2026-08-22): the category budget list's spent figure turns flag
+     red once spending exceeds that category's own budget — same strictly-
+     greater-than rule as the category rail's bars and the Expenses circle
+     (see test 36's off-by-one regression), reusing the exact same --flag
+     colour via a new .over class on .bcat-spent (mirrors the existing
+     .amt.over / .over bar-fill convention elsewhere in this file, just
+     applied to plain text here instead of a bar or an arc). */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var cat=H.getState().categories.find(function(c){return c.id==="seed-groceries";});
+    H.editCategory(cat.id,{budgetMinor:400000}); // 4000 budget
+    H.createEntry({date:"2026-08-01",amountMinor:300000,direction:"expense",categoryId:cat.id,note:""}); // 3000 spent, under
+    H.renderAll();
+    var spentEl=function(){ return d.querySelector('#budgetCatList .bcatrow[data-id="'+cat.id+'"] .bcat-spent'); };
+    assert("spending under budget leaves the spent figure plain, not flagged",
+      !spentEl().classList.contains("over"));
+
+    H.createEntry({date:"2026-08-02",amountMinor:200000,direction:"expense",categoryId:cat.id,note:""}); // total 5000, over
+    H.renderAll();
+    assert("REGRESSION spending over budget flags the spent figure with .over",
+      spentEl().classList.contains("over"));
+    var overColor=d.defaultView.getComputedStyle(spentEl()).color;
+    var flagProbe=d.createElement("div");
+    flagProbe.style.color="var(--flag)";
+    d.body.appendChild(flagProbe);
+    var flagColor=d.defaultView.getComputedStyle(flagProbe).color;
+    flagProbe.remove();
+    assert("the flagged spent figure actually renders in --flag red, not just carries the class name",
+      overColor===flagColor);
+
+    H.resetState(); H.setView(2026,7);
+    var s2=H.getState(); s2.settings.currency="DKK"; H.setState(s2);
+    var cat2=H.getState().categories.find(function(c){return c.id==="seed-rent";});
+    H.editCategory(cat2.id,{budgetMinor:625000}); // 6250 budget
+    H.createEntry({date:"2026-08-01",amountMinor:625000,direction:"expense",categoryId:cat2.id,note:""}); // spent exactly 6250
+    H.renderAll();
+    var exactSpentEl=d.querySelector('#budgetCatList .bcatrow[data-id="'+cat2.id+'"] .bcat-spent');
+    assert("REGRESSION spending exactly the budgeted amount does not flag the spent figure (matches the strict > rule elsewhere)",
+      !exactSpentEl.classList.contains("over"));
+  })();
+
   return results;
 }
 })();
