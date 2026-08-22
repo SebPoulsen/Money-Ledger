@@ -741,6 +741,11 @@ function initQuickAdd() {
     document.getElementById("qaNote").value = "";
     toast((quickDir === "income" ? "Income" : "Expense") + " logged");
     renderAll();
+    // Enter in any quick-add field (amount, date, or note) already submits
+    // the form via native implicit submission — this just sends focus back
+    // to a ready-to-type amount field afterward, for logging several
+    // entries in a row without reaching for the mouse.
+    document.getElementById("qaAmount").focus();
   });
 }
 

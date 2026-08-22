@@ -1379,6 +1379,45 @@ async function runTests(H,d){
       all.length===1);
   })();
 
+  /* 59. REGRESSION (2026-08-22): after logging an entry via quick-add,
+     focus returns to the amount field so several entries can be logged in
+     a row without reaching for the mouse. Enter in ANY quick-add field
+     already triggers native implicit form submission (the form has a
+     submit button and no `novalidate`-blocked required fields once
+     amount is filled) — so this is tested by dispatching the same
+     "submit" event the rest of this suite already uses for every other
+     form (addCatForm, addRecurringForm, editRecurringForm above), not by
+     simulating a raw keypress.
+     document.activeElement is NOT used to check the result: this suite's
+     iframe is display:none (see CSS above), and a prior test already
+     found that real focus doesn't reliably land inside a hidden frame —
+     see the "Not asserted here" comment on the FAB-focus test above,
+     where the same limitation made a direct activeElement check
+     unusable. Instead this spies on the element's own .focus() method
+     directly, the same way fireChange()/dispatchEvent are used elsewhere
+     in this file to invoke real app code without depending on real
+     browser focus/rendering behavior — it proves the app CALLED
+     qaAmount.focus(), which is what the fix actually does, regardless of
+     whether the hidden iframe honors it visibly. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.renderAll();
+    var amountEl=d.getElementById("qaAmount");
+    var noteEl=d.getElementById("qaNote");
+    amountEl.value="42";
+    noteEl.value="Coffee";
+    var focusCalls=0;
+    var realFocus=amountEl.focus;
+    amountEl.focus=function(){ focusCalls++; return realFocus.apply(this,arguments); };
+    d.getElementById("quickaddForm").dispatchEvent(new (d.defaultView.Event)("submit",{cancelable:true}));
+    amountEl.focus=realFocus;
+    assert("setup sanity: submitting quick-add with a valid amount actually creates the entry",
+      H.getState().entries.some(function(e){return e.note==="Coffee" && e.amountMinor===4200;}));
+    assert("REGRESSION after logging an entry via quick-add, focus is sent back to the amount field",
+      focusCalls===1);
+  })();
+
   return results;
 }
 })();
