@@ -714,7 +714,24 @@ function initQuickAdd() {
   const dirBtns = form.querySelectorAll(".dirtoggle button");
   const catSelect = document.getElementById("qaCategory");
   const dateInput = document.getElementById("qaDate");
+  const todayBtn = document.getElementById("qaToday");
   dateInput.value = todayStr();
+
+  // The date field is deliberately "sticky" across submissions (see
+  // CLAUDE.md quick-add notes) so a batch of same-day backfilled entries
+  // doesn't need the date reselected each time — this button is the
+  // deliberate way back to today, shown only while the field actually
+  // differs from it.
+  function updateTodayBtn() {
+    todayBtn.hidden = dateInput.value === todayStr();
+  }
+  updateTodayBtn();
+  dateInput.addEventListener("change", updateTodayBtn);
+  todayBtn.addEventListener("click", () => {
+    dateInput.value = todayStr();
+    updateTodayBtn();
+    document.getElementById("qaAmount").focus();
+  });
 
   function setDir(dir) {
     quickDir = dir;

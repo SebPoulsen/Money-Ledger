@@ -40,7 +40,10 @@
       </div>
       <div class="qa-field qa-date">
         <label for="qaDate">Date</label>
-        <input type="date" id="qaDate" required>
+        <div class="qa-date-row">
+          <input type="date" id="qaDate" required>
+          <button type="button" id="qaToday" class="ghost qa-today" hidden>Today</button>
+        </div>
       </div>
       <div class="qa-field qa-note">
         <label for="qaNote">Note</label>

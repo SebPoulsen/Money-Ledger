@@ -50,8 +50,11 @@ button{cursor:pointer}
 .qa-field input,.qa-field select{border:1px solid var(--rule);background:var(--paper);padding:9px;font-size:14px;border-radius:0;height:38px}
 .qa-amount{width:130px}
 .qa-amount input{font-family:var(--mono);font-size:16px;text-align:right}
-.qa-date{width:150px}
+.qa-date{width:190px}
 .qa-date input{font-family:var(--mono)}
+.qa-date-row{display:flex;gap:6px;align-items:center}
+.qa-date-row input{flex:1;min-width:0}
+.qa-date-row .qa-today{padding:8px 10px;white-space:nowrap}
 .qa-note{flex:1;min-width:160px}
 .qa-cat{width:170px}
 .qa-type{width:150px}

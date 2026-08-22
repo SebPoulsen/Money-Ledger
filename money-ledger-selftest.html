@@ -1418,6 +1418,42 @@ async function runTests(H,d){
       focusCalls===1);
   })();
 
+  /* 60. (2026-08-22): the quick-add date field is deliberately "sticky"
+     across submissions (a batch of same-day backfilled entries shouldn't
+     need the date reselected each time — see CLAUDE.md) — so instead of
+     auto-resetting to today after every log, a "Today" button sits next
+     to the date field as the deliberate way back, shown only while the
+     field actually differs from today. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.renderAll();
+    var dateEl=d.getElementById("qaDate");
+    var todayBtn=d.getElementById("qaToday");
+    assert("setup sanity: the date field starts on today",
+      dateEl.value===H.todayStr());
+    assert("the Today button is hidden while the date field is already on today",
+      todayBtn.hidden===true);
+
+    dateEl.value="2026-08-05";
+    fireChange(dateEl);
+    assert("REGRESSION changing the date away from today reveals the Today button",
+      todayBtn.hidden===false);
+
+    var amountEl=d.getElementById("qaAmount");
+    var focusCalls=0;
+    var realFocus=amountEl.focus;
+    amountEl.focus=function(){ focusCalls++; return realFocus.apply(this,arguments); };
+    todayBtn.click();
+    amountEl.focus=realFocus;
+    assert("REGRESSION clicking Today resets the date field back to today",
+      dateEl.value===H.todayStr());
+    assert("clicking Today hides the button again now that the field matches today",
+      todayBtn.hidden===true);
+    assert("clicking Today sends focus to the amount field, same as logging an entry",
+      focusCalls===1);
+  })();
+
   return results;
 }
 })();
