@@ -516,6 +516,35 @@ any time a fix "isn't taking effect" in this local Chrome despite the
 served file being correct — check incognito before assuming the app code
 is still wrong.
 
+**Testing gotcha: a "fresh incognito window" isn't actually fresh if
+another incognito window from the same Chrome launch is still open
+(2026-08-22).** While verifying the Budget-list over-budget flag (see
+"General fixes" below), the self-test suite showed 6 tests failing —
+including two from already-shipped, already-verified fixes, with no
+code change that could explain their breaking — across three separate
+attempts, each via a newly opened `open -na "Google Chrome" --args
+--incognito "<url>"` window. All three actually shared one underlying
+incognito session/cache with every other incognito window already open
+from earlier in the same conversation, because repeated `--incognito`
+launches attach to the *existing* browser process's one incognito
+profile instead of each starting an independent one — the opposite of
+what "open a fresh incognito window" sounds like it should do, and
+exactly the isolation the previous entry's fix depends on. Confirmed
+this was a stale-verification-window artifact, not a real app
+regression, via Chrome's DevTools Protocol (`--remote-debugging-port`,
+driven over a raw websocket with Python) against a Chrome instance
+launched with its own `--user-data-dir` — an *actually* separate
+profile, unlike another `--incognito` window — which showed 0 failing
+against the same code. CDP is also worth reaching for on its own
+merits: it reads results straight from the page's DOM/console over the
+socket, so it sidesteps the `screencapture`/Space-switching flakiness
+noted throughout this file entirely, rather than fighting it. The
+general lesson: if a *previously verified* behavior appears to have
+broken with nothing in the code to explain it, suspect the verification
+window's accumulated state before re-debugging the app from scratch —
+close every incognito window and start over (or use `--user-data-dir`)
+before trusting a failing result.
+
 **The FAB stays visible on every screen and always does something
 useful, rather than hiding on Budget/Recurring.** Sebastian asked which
 was the right call: hide the FAB where quick-add isn't shown, or keep it
