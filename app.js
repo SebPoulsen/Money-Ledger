@@ -543,6 +543,8 @@ function createRecurring(fields) {
     direction: fields.direction,
     categoryId: fields.categoryId,
     dayOfMonth: fields.dayOfMonth,
+    startMonth: fields.startMonth,
+    paused: false,
     updatedAt: nowIso(),
     updatedBy: DEVICE_ID,
     deleted: false,
@@ -560,6 +562,7 @@ function editRecurring(id, fields) {
   if (fields.direction !== undefined) recurring.direction = fields.direction;
   if (fields.categoryId !== undefined) recurring.categoryId = fields.categoryId;
   if (fields.dayOfMonth !== undefined) recurring.dayOfMonth = fields.dayOfMonth;
+  if (fields.startMonth !== undefined) recurring.startMonth = fields.startMonth;
   recurring.updatedAt = nowIso();
   recurring.updatedBy = DEVICE_ID;
   return recurring;
@@ -585,6 +588,28 @@ function undeleteRecurring(id) {
   return recurring;
 }
 
+// Pausing/resuming never touches entries already auto-inserted from this
+// record — same "not a live reference" principle as every other Recurring
+// edit (see "Recurring design decisions"). It only changes whether FUTURE
+// due-checks consider this record eligible (see dueRecurring below).
+function pauseRecurring(id) {
+  const recurring = state.recurring.find((x) => x.id === id);
+  if (!recurring) return null;
+  recurring.paused = true;
+  recurring.updatedAt = nowIso();
+  recurring.updatedBy = DEVICE_ID;
+  return recurring;
+}
+
+function resumeRecurring(id) {
+  const recurring = state.recurring.find((x) => x.id === id);
+  if (!recurring) return null;
+  recurring.paused = false;
+  recurring.updatedAt = nowIso();
+  recurring.updatedBy = DEVICE_ID;
+  return recurring;
+}
+
 // ---------- recurring auto-insert ----------
 
 function daysInMonth(y, m) {
@@ -593,19 +618,33 @@ function daysInMonth(y, m) {
 function clampDay(y, m, day) {
   return Math.min(day, daysInMonth(y, m));
 }
+// "YYYY-MM", zero-padded so it string-compares correctly against another
+// monthKey() result — used both for the deterministic auto-insert id below
+// and for gating a Recurring record's startMonth against the real calendar.
+function monthKey(y, m) {
+  return y + "-" + String(m + 1).padStart(2, "0");
+}
 
-// Which non-deleted Recurring records are due for a fresh auto-insert
-// right now: today's real date has reached the (clamped) day, and no
-// entry tagged with this recurring id exists yet for today's real month.
-// Pure — takes `today` as a parameter rather than reading the system clock
-// itself, so it's directly testable without mocking Date (CLAUDE.md hard
-// rule 10). Deliberately checks the CURRENT month only, not every month
-// since the record was created or since the app was last opened — see
-// "Recurring design decisions" for why backfilling missed months was
-// scoped out rather than silently bulk-inserting old history.
+// Which non-deleted, non-paused Recurring records are due for a fresh
+// auto-insert right now: today's real date has reached the (clamped) day,
+// today's real month is at or past the record's startMonth (a record with
+// no startMonth has no restriction — every record that existed before this
+// field was added reads that way, by construction, with no migration
+// needed), and no entry tagged with this recurring id exists yet for
+// today's real month. Pure — takes `today` as a parameter rather than
+// reading the system clock itself, so it's directly testable without
+// mocking Date (CLAUDE.md hard rule 10). Deliberately checks the CURRENT
+// month only, not every month since the record was created or since the
+// app was last opened — see "Recurring design decisions" for why
+// backfilling missed months was scoped out rather than silently bulk-
+// inserting old history. Pausing/startMonth only ever narrow this filter —
+// they never touch recurringInsertId or the entries table, so the one-
+// entry-per-recurring-per-month invariant that id relies on is untouched.
 function dueRecurring(recurringList, entries, today) {
   const y = today.getFullYear(), m = today.getMonth();
-  return recurringList.filter((r) => !r.deleted).filter((r) => {
+  const curKey = monthKey(y, m);
+  return recurringList.filter((r) => !r.deleted && !r.paused).filter((r) => {
+    if (r.startMonth && r.startMonth > curKey) return false;
     const day = clampDay(y, m, r.dayOfMonth);
     if (today.getDate() < day) return false;
     const alreadyInserted = entries.some((e) => {
@@ -615,6 +654,22 @@ function dueRecurring(recurringList, entries, today) {
     });
     return !alreadyInserted;
   });
+}
+
+// Whether a Recurring record currently counts as "active" for display
+// purposes (the Recurring screen's summary totals and day-group totals,
+// and whether a list row gets marked inactive) — distinct from dueRecurring
+// above, which additionally checks the day-of-month and whether this
+// month's entry already exists. A paused or not-yet-started record is
+// never "due" either, so isRecurringActive(r, today) is implied by
+// dueRecurring's own filters, but rendering needs the coarser check on its
+// own (a record can be "active" — will auto-insert eventually this month —
+// without being "due" yet today). Pure, same `today`-as-parameter pattern
+// as dueRecurring, for the same testability reason.
+function isRecurringActive(r, today) {
+  if (r.paused) return false;
+  const curKey = monthKey(today.getFullYear(), today.getMonth());
+  return !r.startMonth || r.startMonth <= curKey;
 }
 
 // The auto-inserted entry's id is deterministic — derived from the
@@ -633,7 +688,7 @@ function dueRecurring(recurringList, entries, today) {
 // uses fixed, non-uid() ids for the same reason (two devices need to
 // independently agree it's "the same" record).
 function recurringInsertId(recurringId, y, m) {
-  return "recurring:" + recurringId + ":" + y + "-" + String(m + 1).padStart(2, "0");
+  return "recurring:" + recurringId + ":" + monthKey(y, m);
 }
 
 // The side-effecting wrapper: creates the actual entries, saves, toasts,
@@ -705,6 +760,28 @@ function populateDaySelect(select, selectedDay) {
     const o = document.createElement("option");
     o.value = day; o.textContent = ordinal(day);
     if (day === selectedDay) o.selected = true;
+    select.appendChild(o);
+  }
+}
+
+// A fixed window of real calendar months (a year back, a year forward)
+// around today — like populateDaySelect, this is an absolute calendar
+// concept, not tied to whichever month the register happens to be
+// viewing. selectedKey falling outside the window (or being null/undefined,
+// which happens for a record that predates this field and has never been
+// restricted) just leaves the browser default (first option) selected —
+// harmless, since a record only actually gets a startMonth written to it
+// if this form is submitted.
+function populateMonthSelect(select, selectedKey) {
+  select.innerHTML = "";
+  const today = new Date();
+  for (let offset = -12; offset <= 12; offset++) {
+    const d = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+    const key = monthKey(d.getFullYear(), d.getMonth());
+    const o = document.createElement("option");
+    o.value = key;
+    o.textContent = d.toLocaleDateString(undefined, { month: "short", year: "numeric" });
+    if (key === selectedKey) o.selected = true;
     select.appendChild(o);
   }
 }
@@ -1303,7 +1380,7 @@ function newerSide(aIso, bIso) {
 // a second apart shouldn't count as a difference worth resolving).
 const ENTRY_CONTENT_FIELDS = ["date", "amountMinor", "direction", "categoryId", "note", "recurringId", "deleted", "deletedAt"];
 const CATEGORY_CONTENT_FIELDS = ["name", "direction", "hue", "color", "budgetMinor", "deleted", "deletedAt"];
-const RECURRING_CONTENT_FIELDS = ["name", "amountMinor", "direction", "categoryId", "dayOfMonth", "deleted", "deletedAt"];
+const RECURRING_CONTENT_FIELDS = ["name", "amountMinor", "direction", "categoryId", "dayOfMonth", "startMonth", "paused", "deleted", "deletedAt"];
 
 function sameContent(a, b, fields) {
   return fields.every((f) => a[f] === b[f]);
@@ -1824,15 +1901,21 @@ function renderRecurringView() {
 
   // Totals always show both directions regardless of which side the
   // toggle is on — a plain sum of everything declared, not scoped to the
-  // currently-viewed list (Recurring design decisions).
+  // currently-viewed list (Recurring design decisions). Paused and not-
+  // yet-started items are excluded — the totals describe what's currently
+  // actually going to auto-insert, not everything ever declared.
+  const today = new Date();
   const live = state.recurring.filter((r) => !r.deleted);
-  const totalIncome = live.filter((r) => r.direction === "income").reduce((s, r) => s + r.amountMinor, 0);
-  const totalExpenses = live.filter((r) => r.direction === "expense").reduce((s, r) => s + r.amountMinor, 0);
+  const activeLive = live.filter((r) => isRecurringActive(r, today));
+  const totalIncome = activeLive.filter((r) => r.direction === "income").reduce((s, r) => s + r.amountMinor, 0);
+  const totalExpenses = activeLive.filter((r) => r.direction === "expense").reduce((s, r) => s + r.amountMinor, 0);
   document.getElementById("recurringSummaryBox").innerHTML = `
     <div class="summary-row income"><span>Recurring income</span><b>${formatMoney(totalIncome, currency)}</b></div>
     <div class="summary-row"><span>Recurring expenses</span><b>${formatMoney(totalExpenses, currency)}</b></div>
   `;
 
+  // The list itself still shows paused/future-dated items (marked inactive
+  // below) — only the totals above narrow to what's currently active.
   const list = document.getElementById("recurringList");
   const items = live.filter((r) => r.direction === recurringDir);
   if (items.length === 0) {
@@ -1851,7 +1934,10 @@ function renderRecurringView() {
   });
   Array.from(byDay.keys()).sort((a, b) => a - b).forEach((day) => {
     const rows = byDay.get(day);
-    const dayTotal = rows.reduce((s, r) => s + r.amountMinor, 0);
+    // Day-group totals exclude paused/future-dated items too, same as the
+    // summary box above — a day total that disagreed with the summary
+    // about what "active" means would be confusing.
+    const dayTotal = rows.filter((r) => isRecurringActive(r, today)).reduce((s, r) => s + r.amountMinor, 0);
     const head = document.createElement("div");
     head.className = "dayhead";
     head.innerHTML = `<b>${ordinal(day).toUpperCase()}</b><span>${formatMoney(dayTotal, currency)}</span>`;
@@ -1861,20 +1947,30 @@ function renderRecurringView() {
       const cat = catById(r.categoryId);
       const amtClass = r.direction === "income" ? "income" : "";
       const sign = r.direction === "income" ? "+" : "−";
+      const active = isRecurringActive(r, today);
       // Same row shape as the register's .entryrow (category on top, name
       // as the muted line underneath, amount right-aligned) — editing moved
       // into a popup sheet instead of inline fields, per Sebastian's request
       // (2026-08-12) that a recurring item read exactly like a logged entry
-      // instead of sprawling across two lines on narrow screens.
+      // instead of sprawling across two lines on narrow screens. A paused
+      // or not-yet-started item stays in the list (dimmed via .inactive)
+      // rather than disappearing — the status is appended to the note line
+      // rather than taking a second line, keeping the row one line tall.
+      let statusSuffix = "";
+      if (r.paused) statusSuffix = " · Paused";
+      else if (r.startMonth && r.startMonth > monthKey(today.getFullYear(), today.getMonth())) {
+        const [sy, sm] = r.startMonth.split("-").map(Number);
+        statusSuffix = " · Starts " + new Date(sy, sm - 1, 1).toLocaleDateString(undefined, { month: "short", year: "numeric" });
+      }
       const row = document.createElement("button");
       row.type = "button";
-      row.className = "entryrow";
+      row.className = "entryrow" + (active ? "" : " inactive");
       row.dataset.id = r.id;
       row.innerHTML = `
         <span class="dot" style="background:${cat ? cat.color : "var(--none)"}"></span>
         <span class="meta">
           <span class="cat">${cat ? escapeHtml(cat.name) : "Uncategorized"}</span>
-          <span class="note">${escapeHtml(r.name)}</span>
+          <span class="note">${escapeHtml(r.name)}${escapeHtml(statusSuffix)}</span>
         </span>
         <span class="amt ${amtClass}">${sign}${formatMoney(r.amountMinor, currency)}</span>
       `;
@@ -1906,6 +2002,9 @@ function openEditRecurringSheet(recurringId) {
   document.getElementById("editRecName").value = r.name;
   document.getElementById("editRecAmount").value = amountInputValue(r.amountMinor);
   populateDaySelect(document.getElementById("editRecDay"), r.dayOfMonth);
+  populateMonthSelect(document.getElementById("editRecStartMonth"), r.startMonth);
+  const pauseBtn = document.getElementById("editRecPauseToggle");
+  pauseBtn.textContent = r.paused ? "Resume this recurring item" : "Pause this recurring item";
   scrim.classList.add("on");
 }
 
@@ -1934,10 +2033,36 @@ function initEditRecurringSheet() {
       name,
       categoryId: document.getElementById("editRecCategory").value,
       dayOfMonth: day,
+      startMonth: document.getElementById("editRecStartMonth").value,
     });
     saveState();
     closeEditRecurringSheet();
     toast("Recurring item updated");
+    renderAll();
+  });
+
+  // Pausing stops future auto-insert without deleting the record; resuming
+  // triggers the due-check synchronously in this same click, not deferred
+  // to the next app open — deliberately diverges from how a brand-new
+  // Recurring item behaves (which only gets caught up on next load), per
+  // Sebastian's explicit call: a silent multi-day gap before a resumed
+  // item's entry shows up has the same "did this actually work?" problem
+  // the original "insert immediately" decision was about.
+  document.getElementById("editRecPauseToggle").addEventListener("click", () => {
+    if (!editingRecurringId) return;
+    const r = state.recurring.find((x) => x.id === editingRecurringId);
+    if (!r) return;
+    if (r.paused) {
+      resumeRecurring(editingRecurringId);
+      saveState();
+      applyDueRecurring();
+      toast("Recurring item resumed");
+    } else {
+      pauseRecurring(editingRecurringId);
+      saveState();
+      toast("Recurring item paused");
+    }
+    closeEditRecurringSheet();
     renderAll();
   });
 
@@ -1968,8 +2093,13 @@ function initRecurringView() {
   document.getElementById("recurringBack").addEventListener("click", () => showRecurringView(false));
   // Static — 31 fixed options, never depends on state, so populated once
   // here rather than rebuilt on every render (unlike the category select,
-  // whose options change with recurringDir).
+  // whose options change with recurringDir). The start-month window is
+  // likewise anchored to real today, not the viewed month, so it's also
+  // safe to populate once; defaults to the current month per the agreed
+  // default (a newly-declared item starts now unless pushed forward).
   populateDaySelect(document.getElementById("newRecDay"), 1);
+  const today = new Date();
+  populateMonthSelect(document.getElementById("newRecStartMonth"), monthKey(today.getFullYear(), today.getMonth()));
   document.querySelectorAll("#recurringDirToggle button").forEach((b) => {
     b.addEventListener("click", () => { recurringDir = b.dataset.dir; renderAll(); });
   });
@@ -1979,8 +2109,9 @@ function initRecurringView() {
     const amountMinor = parseAmountToMinor(document.getElementById("newRecAmount").value);
     const categoryId = document.getElementById("newRecCategory").value;
     const day = Math.round(Number(document.getElementById("newRecDay").value));
-    if (!name || amountMinor == null || !categoryId || !day || day < 1 || day > 31) return;
-    createRecurring({ name, amountMinor, direction: recurringDir, categoryId, dayOfMonth: day });
+    const startMonth = document.getElementById("newRecStartMonth").value;
+    if (!name || amountMinor == null || !categoryId || !day || day < 1 || day > 31 || !startMonth) return;
+    createRecurring({ name, amountMinor, direction: recurringDir, categoryId, dayOfMonth: day, startMonth });
     saveState();
     document.getElementById("newRecName").value = "";
     document.getElementById("newRecAmount").value = "";
@@ -2058,7 +2189,9 @@ function exposeTestHook() {
     setView: (y, m) => { viewYear = y; viewMonth = m; renderAll(); },
 
     createRecurring, editRecurring, deleteRecurring, undeleteRecurring,
+    pauseRecurring, resumeRecurring,
     daysInMonth, clampDay, dueRecurring, applyDueRecurring, recurringInsertId,
+    monthKey, isRecurringActive,
     RECURRING_CONTENT_FIELDS,
     getRecurringDir: () => recurringDir,
     setRecurringDir: (dir) => { recurringDir = dir; renderAll(); },

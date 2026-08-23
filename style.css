@@ -65,6 +65,7 @@ button{cursor:pointer}
 .qa-chips{margin-top:10px}
 .qa-name{flex:1;min-width:160px}
 .qa-day{width:110px}
+.qa-startmonth{width:120px}
 
 /* category dot/chip/color-picker system — carried over as-is from Hours Ledger */
 .chips{display:flex;flex-wrap:wrap;gap:5px}
@@ -179,6 +180,7 @@ button{cursor:pointer}
 .entryrow .amt{font-family:var(--mono);font-size:13px;font-weight:600;flex:none;min-width:80px;text-align:right}
 .entryrow .amt.income{color:var(--income)}
 .entryrow .amt.over{color:var(--flag)}
+.entryrow.inactive{opacity:.55}
 .register-empty{padding:26px 14px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.7}
 
 /* category rail rows — totals + inline edit, same bones as Hours Ledger's .cat/.tot */

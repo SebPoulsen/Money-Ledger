@@ -1496,6 +1496,250 @@ async function runTests(H,d){
       !exactSpentEl.classList.contains("over"));
   })();
 
+  /* ============ recurring: start month & pause (2026-08-22) ============
+     See CLAUDE.md "Recurring design decisions" for the full design
+     conversation. dueRecurring/isRecurringActive both take `today` as a
+     parameter (same pattern as test 45), so startMonth/paused logic is
+     tested deterministically without depending on the real system clock —
+     the DOM-integration tests below (68-73) are the exception, since
+     renderRecurringView/applyDueRecurring read the real Date() internally,
+     same constraint test 46 already lives with (dayOfMonth:1 is always
+     "due" by the time this suite runs later the same month). */
+
+  /* 62. dueRecurring respecting startMonth, including the no-startMonth-key
+     regression (a record that predates this field must behave exactly as
+     it always has — no restriction). */
+  (function(){
+    var todayOn=new Date(2026,7,5); // August 5th, 2026 — curKey "2026-08"
+    var futureStart={id:"r1",name:"Gym",amountMinor:1000,direction:"expense",categoryId:"seed-health",dayOfMonth:5,deleted:false,startMonth:"2099-01"};
+    assert("a recurring item whose startMonth is in the future is never due, even on its day",
+      H.dueRecurring([futureStart],[],todayOn).length===0);
+    var startsThisMonth=Object.assign({},futureStart,{startMonth:"2026-08"});
+    assert("a recurring item whose startMonth is the current month is due once its day arrives",
+      H.dueRecurring([startsThisMonth],[],todayOn).length===1);
+    var startsPast=Object.assign({},futureStart,{startMonth:"2020-01"});
+    assert("a recurring item whose startMonth is well in the past is due, same as no restriction",
+      H.dueRecurring([startsPast],[],todayOn).length===1);
+    var noStartMonthKey={id:"r1",name:"Old item",amountMinor:1000,direction:"expense",categoryId:"seed-health",dayOfMonth:5,deleted:false};
+    assert("REGRESSION a record with no startMonth key at all (predates this field) is due exactly as before",
+      H.dueRecurring([noStartMonthKey],[],todayOn).length===1);
+  })();
+
+  /* 63. dueRecurring respecting paused, including the no-paused-key
+     regression. */
+  (function(){
+    var todayOn=new Date(2026,7,5);
+    var paused={id:"r1",name:"Gym",amountMinor:1000,direction:"expense",categoryId:"seed-health",dayOfMonth:5,deleted:false,paused:true};
+    assert("a paused recurring item is never due, even on its day with nothing inserted yet",
+      H.dueRecurring([paused],[],todayOn).length===0);
+    var notPaused=Object.assign({},paused,{paused:false});
+    assert("the same item with paused:false is due normally",
+      H.dueRecurring([notPaused],[],todayOn).length===1);
+    var noPausedKey={id:"r1",name:"Old item",amountMinor:1000,direction:"expense",categoryId:"seed-health",dayOfMonth:5,deleted:false};
+    assert("REGRESSION a record with no paused key at all (predates this field) is due exactly as before",
+      H.dueRecurring([noPausedKey],[],todayOn).length===1);
+  })();
+
+  /* 64. isRecurringActive: the coarser "counts as active for display"
+     check used by the Recurring screen's totals and row marking. */
+  (function(){
+    var today=new Date(2026,7,20); // curKey "2026-08"
+    assert("a plain record with no startMonth/paused is active",
+      H.isRecurringActive({},today)===true);
+    assert("a paused record is never active, regardless of startMonth",
+      H.isRecurringActive({paused:true,startMonth:"2000-01"},today)===false);
+    assert("a record starting next month is not active yet",
+      H.isRecurringActive({paused:false,startMonth:"2026-09"},today)===false);
+    assert("a record starting this month is active",
+      H.isRecurringActive({paused:false,startMonth:"2026-08"},today)===true);
+    assert("a record that started in the past is active",
+      H.isRecurringActive({paused:false,startMonth:"2020-01"},today)===true);
+  })();
+
+  /* 65. pauseRecurring/resumeRecurring mutations, mirroring
+     deleteRecurring/undeleteRecurring's own test coverage. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var rec=H.createRecurring({name:"Gym",amountMinor:29900,direction:"expense",categoryId:"seed-health",dayOfMonth:1,startMonth:"2026-08"});
+    assert("a freshly-created recurring item starts out not paused",
+      rec.paused===false);
+    var afterPause=H.pauseRecurring(rec.id);
+    assert("pauseRecurring sets paused and bumps updatedAt/updatedBy",
+      afterPause.paused===true && afterPause.updatedBy===H.getDeviceId() && !!afterPause.updatedAt);
+    var afterResume=H.resumeRecurring(rec.id);
+    assert("resumeRecurring clears paused again",
+      afterResume.paused===false);
+    assert("pauseRecurring/resumeRecurring on an unknown id is a safe no-op",
+      H.pauseRecurring("nope")===null && H.resumeRecurring("nope")===null);
+  })();
+
+  /* 66. sync: startMonth and paused are real content fields, merged the
+     same last-write-wins way as every other Recurring field — no special
+     handling, per CLAUDE.md's explicit confirmation of that. */
+  (function(){
+    assert("RECURRING_CONTENT_FIELDS includes startMonth and paused, or they would silently never sync",
+      H.RECURRING_CONTENT_FIELDS.indexOf("startMonth")!==-1 && H.RECURRING_CONTENT_FIELDS.indexOf("paused")!==-1);
+    var local={id:"r1",name:"Gym",amountMinor:29900,direction:"expense",categoryId:"seed-health",dayOfMonth:1,startMonth:"2026-08",paused:false,
+      updatedAt:"2026-08-01T10:00:00.000Z",updatedBy:"device-A",deleted:false,deletedAt:null};
+    var remotePaused=Object.assign({},local,{paused:true,updatedAt:"2026-08-01T10:00:10.000Z",updatedBy:"device-B"});
+    var merged=H.mergeRecords([local],[remotePaused],H.RECURRING_CONTENT_FIELDS);
+    assert("a pause set on one device reaches the other via the same merge as any other field edit",
+      merged.merged[0].paused===true);
+  })();
+
+  /* 67. applyDueRecurring skips a paused item and a not-yet-started item
+     even when their day has already passed this month — through real
+     state, not just the pure dueRecurring filter. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var pausedRec=H.createRecurring({name:"Paused thing",amountMinor:1000,direction:"expense",categoryId:"seed-health",dayOfMonth:1,startMonth:"2020-01"});
+    H.pauseRecurring(pausedRec.id);
+    var futureRec=H.createRecurring({name:"Future thing",amountMinor:2000,direction:"expense",categoryId:"seed-health",dayOfMonth:1,startMonth:"2099-01"});
+    H.applyDueRecurring();
+    assert("applyDueRecurring never inserts an entry for a paused item",
+      !H.getState().entries.some(function(e){return e.recurringId===pausedRec.id;}));
+    assert("applyDueRecurring never inserts an entry for an item that hasn't started yet",
+      !H.getState().entries.some(function(e){return e.recurringId===futureRec.id;}));
+  })();
+
+  /* 68. rendering: a paused or not-yet-started item still appears in the
+     Recurring list (Sebastian's explicit "show, marked inactive" answer),
+     dimmed via .inactive with a status suffix on its note line — not
+     hidden, and not indistinguishable from an active item. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var active=H.createRecurring({name:"Netflix",amountMinor:8900,direction:"expense",categoryId:"seed-subscriptions",dayOfMonth:10,startMonth:"2020-01"});
+    var paused=H.createRecurring({name:"Gym",amountMinor:29900,direction:"expense",categoryId:"seed-health",dayOfMonth:10,startMonth:"2020-01"});
+    H.pauseRecurring(paused.id);
+    var future=H.createRecurring({name:"New thing",amountMinor:5000,direction:"expense",categoryId:"seed-other-expense",dayOfMonth:10,startMonth:"2099-01"});
+    H.setRecurringDir("expense");
+    H.renderAll();
+    var rowFor=function(id){ return d.querySelector('.entryrow[data-id="'+id+'"]'); };
+    assert("an active recurring item's row has no .inactive class",
+      !rowFor(active.id).classList.contains("inactive"));
+    assert("a paused recurring item still renders in the list, marked .inactive",
+      !!rowFor(paused.id) && rowFor(paused.id).classList.contains("inactive"));
+    assert("a paused item's note line is marked · Paused",
+      rowFor(paused.id).querySelector(".note").textContent.indexOf("Paused")!==-1);
+    assert("a not-yet-started recurring item still renders in the list, marked .inactive",
+      !!rowFor(future.id) && rowFor(future.id).classList.contains("inactive"));
+    assert("a not-yet-started item's note line says when it starts",
+      rowFor(future.id).querySelector(".note").textContent.indexOf("Starts")!==-1);
+  })();
+
+  /* 69. rendering: the summary totals and the day-group total both
+     exclude paused/not-yet-started items, so they agree with each other
+     about what "active" means (Sebastian's explicit answers). */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var active=H.createRecurring({name:"Netflix",amountMinor:8900,direction:"expense",categoryId:"seed-subscriptions",dayOfMonth:10,startMonth:"2020-01"});
+    var paused=H.createRecurring({name:"Gym",amountMinor:29900,direction:"expense",categoryId:"seed-health",dayOfMonth:10,startMonth:"2020-01"});
+    H.pauseRecurring(paused.id);
+    H.setRecurringDir("expense");
+    H.renderAll();
+    var expensesFigure=d.querySelector("#recurringSummaryBox .summary-row:nth-child(2) b").textContent;
+    assert("the Recurring screen's summary total counts the active item's amount",
+      expensesFigure.indexOf("89")!==-1);
+    assert("the Recurring screen's summary total excludes the paused item's amount",
+      expensesFigure.indexOf("299")===-1);
+    var dayHeadTotal=d.querySelector("#recurringList .dayhead span").textContent;
+    assert("the day-group total excludes the paused item too, matching the summary total",
+      dayHeadTotal.indexOf("89")!==-1 && dayHeadTotal.indexOf("299")===-1);
+  })();
+
+  /* 70. the add-recurring form's start-month field defaults to the real
+     current month, and the option actually picked flows into the created
+     record — through the real DOM form, not a direct createRecurring
+     call. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.setRecurringDir("expense");
+    H.renderAll();
+    var sel=d.getElementById("newRecStartMonth");
+    var now=new Date();
+    var todayKey=H.monthKey(now.getFullYear(),now.getMonth());
+    assert("the add-recurring form's start-month field defaults to the current real month",
+      sel.value===todayKey);
+    var laterOption=Array.prototype.slice.call(sel.options).filter(function(o){return o.value>todayKey;})[0];
+    sel.value=laterOption.value;
+    d.getElementById("newRecName").value="Delayed thing";
+    d.getElementById("newRecAmount").value="299";
+    d.getElementById("newRecCategory").value="seed-health";
+    d.getElementById("newRecDay").value="5";
+    d.getElementById("addRecurringForm").dispatchEvent(new (d.defaultView.Event)("submit",{cancelable:true}));
+    var created=H.getState().recurring.find(function(r){return r.name==="Delayed thing";});
+    assert("submitting the add-recurring form with a chosen start month creates a record carrying that exact month",
+      !!created && created.startMonth===laterOption.value);
+  })();
+
+  /* 71. the edit-recurring sheet pre-fills the start-month select with the
+     record's own value, and the pause/resume button's label reflects the
+     record's current paused state. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var now=new Date();
+    var nextMonthDate=new Date(now.getFullYear(),now.getMonth()+1,1);
+    var nextKey=H.monthKey(nextMonthDate.getFullYear(),nextMonthDate.getMonth());
+    var rec=H.createRecurring({name:"Gym",amountMinor:29900,direction:"expense",categoryId:"seed-health",dayOfMonth:1,startMonth:nextKey});
+    H.setRecurringDir("expense");
+    H.renderAll();
+    d.querySelector('.entryrow[data-id="'+rec.id+'"]').click();
+    assert("opening the edit-recurring sheet pre-fills the start-month select with the record's own startMonth",
+      d.getElementById("editRecStartMonth").value===nextKey);
+    assert("the pause button reads 'Pause' for an item that isn't paused yet",
+      d.getElementById("editRecPauseToggle").textContent==="Pause this recurring item");
+    H.pauseRecurring(rec.id);
+    d.querySelector('.entryrow[data-id="'+rec.id+'"]').click(); // reopen to re-read the now-paused state
+    assert("the pause button reads 'Resume' once the item is paused",
+      d.getElementById("editRecPauseToggle").textContent==="Resume this recurring item");
+  })();
+
+  /* 72. clicking Pause in the edit sheet sets paused through the real DOM
+     handler and closes the sheet, same as the existing Delete button. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var rec=H.createRecurring({name:"Gym",amountMinor:29900,direction:"expense",categoryId:"seed-health",dayOfMonth:1,startMonth:"2020-01"});
+    H.setRecurringDir("expense");
+    H.renderAll();
+    d.querySelector('.entryrow[data-id="'+rec.id+'"]').click();
+    d.getElementById("editRecPauseToggle").click();
+    assert("clicking Pause in the edit sheet sets paused through the real DOM handler",
+      H.getState().recurring.find(function(r){return r.id===rec.id;}).paused===true);
+    assert("clicking Pause closes the edit sheet",
+      !d.getElementById("editRecurringScrim").classList.contains("on"));
+  })();
+
+  /* 73. REGRESSION (2026-08-22): clicking Resume triggers the due-check
+     synchronously in the same click — the entry appears immediately, not
+     deferred to the next app load. Deliberate divergence from how a
+     brand-new item behaves (see CLAUDE.md "Recurring design decisions"):
+     Sebastian's explicit call was that a silent gap before a resumed
+     item's entry shows up has the same "did this actually work?" problem
+     the original "insert immediately" decision was about. dayOfMonth:1 is
+     used so the item is always past-due by the time this suite runs,
+     same precedent as test 46. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var rec=H.createRecurring({name:"Gym",amountMinor:29900,direction:"expense",categoryId:"seed-health",dayOfMonth:1,startMonth:"2020-01"});
+    H.pauseRecurring(rec.id); // paused before ever being due-checked
+    H.setRecurringDir("expense");
+    H.renderAll();
+    d.querySelector('.entryrow[data-id="'+rec.id+'"]').click();
+    d.getElementById("editRecPauseToggle").click();
+    assert("REGRESSION clicking Resume clears the paused flag through the real DOM handler",
+      H.getState().recurring.find(function(r){return r.id===rec.id;}).paused===false);
+    assert("REGRESSION clicking Resume triggers the due-check synchronously in the same click — the entry appears immediately, not deferred to next app load",
+      H.getState().entries.some(function(e){return !e.deleted && e.recurringId===rec.id;}));
+  })();
+
   return results;
 }
 })();

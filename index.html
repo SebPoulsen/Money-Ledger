@@ -160,6 +160,10 @@
           <label for="newRecDay">Day</label>
           <select id="newRecDay"></select>
         </div>
+        <div class="qa-field qa-startmonth">
+          <label for="newRecStartMonth">Starts</label>
+          <select id="newRecStartMonth"></select>
+        </div>
         <div class="qa-field qa-submitwrap">
           <label>&nbsp;</label>
           <button type="submit" class="solid qa-submit">Add</button>
@@ -320,13 +324,22 @@
           <select id="editRecDay"></select>
         </div>
       </div>
-      <div class="field">
-        <label for="editRecCategory">Category</label>
-        <select id="editRecCategory"></select>
+      <div class="two">
+        <div class="field">
+          <label for="editRecCategory">Category</label>
+          <select id="editRecCategory"></select>
+        </div>
+        <div class="field">
+          <label for="editRecStartMonth">Starts</label>
+          <select id="editRecStartMonth"></select>
+        </div>
       </div>
       <div class="sheet-actions">
         <button type="button" id="editRecCancel" class="ghost">Cancel</button>
         <button type="submit" class="solid">Save</button>
+      </div>
+      <div class="sheet-actions">
+        <button type="button" id="editRecPauseToggle" class="linkbtn">Pause this recurring item</button>
       </div>
       <div class="sheet-actions">
         <button type="button" id="editRecDelete" class="linkbtn">Delete this recurring item</button>

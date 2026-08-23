@@ -481,6 +481,67 @@ classes the register/entry-edit sheet already defined. The old
 nothing renders that markup anymore. See "General fixes (2026-08-12)" for
 the testing side of this change.
 
+**Start month and pause (2026-08-22).** The gap: a newly-declared
+Recurring item had no way to say "don't start logging this until next
+month" (e.g. signed up but not charged yet), and no way to temporarily
+stop auto-insert without deleting the record and losing its history/day/
+category setup. Scoped through a batch of clarifying questions before any
+code — see the conversation this was decided in for the full set — landing
+on:
+- `Recurring.startMonth: "YYYY-MM"` and `Recurring.paused: boolean` added
+  to the record, both real content fields in `RECURRING_CONTENT_FIELDS` so
+  they sync via the same per-record merge as every other field — no
+  special-case handling, confirmed deliberately rather than skipped.
+- **Default start month is the current month**, same as how the day field
+  already defaults to "today" — you flip it forward yourself for a
+  not-yet-charged subscription, rather than every ordinary item needing a
+  manual step back to "now."
+- **Pause is a single indefinite toggle** (not a lighter "skip next month
+  only" action) — stops future auto-insert without deleting the record,
+  resumable with one action.
+- **Paused/not-yet-started items are excluded from the Recurring screen's
+  summary totals and from their day-group total** — both describe what's
+  currently actually going to auto-insert, not everything ever declared.
+  The two totals were deliberately kept consistent with each other (a day
+  total disagreeing with the summary about what "active" means would be
+  confusing) rather than only fixing one.
+- **They still appear in the list itself**, marked inactive (dimmed via a
+  new `.entryrow.inactive{opacity:.55}`, same "still real, just not
+  currently doing anything" language as `.bcircle-ring.ring-empty`) with a
+  status appended to the note line — "· Paused" or "· Starts Aug 2026" —
+  rather than a second line, keeping the row the one-line-tall shape from
+  the redesign above. Hiding them entirely was considered and rejected —
+  Sebastian's call was that a declared-but-inactive item is still
+  information worth seeing, not noise to sweep away.
+- **Start month is editable anytime** through the edit sheet, not
+  creation-only — same as every other field on the record.
+- **Resuming a paused item triggers the due-check synchronously in the
+  same click**, not deferred to the next app open — a deliberate small
+  divergence from how a brand-new item behaves (creation doesn't
+  synchronously insert even if its day has already passed this month; it
+  waits for the next `applyDueRecurring` run). Sebastian's explicit
+  reasoning: a silent multi-day gap before a resumed item's entry shows up
+  has the same "did this actually work?" problem the original "auto-insert
+  is silent plus a toast, not a manual confirm" decision above was
+  designed to avoid. Pausing mid-month, by contrast, leaves that month's
+  already-auto-inserted entry completely untouched — consistent with
+  editing/deleting a Recurring record never touching entries already
+  produced from it (see above); pausing is just another field edit.
+- **No new risk to the deterministic-entry-id fix**
+  (`recurring:<id>:<year>-<month>`, 2026-08-21): pause/startMonth only
+  narrow `dueRecurring`'s eligibility filter — they never touch
+  `recurringInsertId` or the entries table, so the one-entry-per-
+  recurring-per-month invariant that id relies on holds by construction,
+  not by new code defending it.
+- **No formal migration** for the two new fields — same lighter-weight
+  defensive-read precedent as `Category.budgetMinor` and
+  `Settings.budgetRingColors`: a record with no `paused`/`startMonth` key
+  at all (every record that existed before this shipped) reads as "not
+  paused, no restriction," which is exactly the correct default for data
+  that was already running before this feature existed. Verified as a
+  standing regression case in the self-test suite, not just asserted in
+  this doc.
+
 ## General fixes (2026-08-12)
 
 **Recurring items now render as one-line `.entryrow` rows with editing
@@ -753,7 +814,7 @@ establishing each one's "born" snapshot, before any of them touch Drive
 for real** — mirrors what tests 11–16 already do, just made explicit
 here since it's easy to get this exact ordering wrong by accident.
 
-**What it covers (162 tests as of 2026-08-12, up from 23):**
+**What it covers (218 tests as of 2026-08-22, up from 23):**
 - **Sync/merge** (the original 23): the `mergeRecords` algorithm directly
   (only-local, only-remote, both-edited, delete-vs-edit,
   identical/skewed/ambiguous timestamps, empty sides, seed-category id
@@ -810,7 +871,24 @@ here since it's easy to get this exact ordering wrong by accident.
   editing/deleting a Recurring record never touching entries already
   produced from it, sync merge via `RECURRING_CONTENT_FIELDS`, and
   rendering (the screen split by direction, adding one through the real
-  DOM form, editing a name inline, deleting through the DOM).
+  DOM form, editing a name inline, deleting through the DOM). **Start
+  month and pause (2026-08-22):** `dueRecurring`/`isRecurringActive`
+  respecting `startMonth` and `paused` in every combination, including a
+  regression for a record with no `startMonth`/`paused` key at all
+  behaving exactly as it did before the fields existed;
+  `pauseRecurring`/`resumeRecurring` bumping `updatedAt`/`updatedBy`;
+  `startMonth`/`paused` actually reaching `RECURRING_CONTENT_FIELDS` and
+  merging like any other field; `applyDueRecurring` skipping a paused or
+  not-yet-started item even when its day has passed; the list still
+  rendering a paused/future item marked `.inactive` with the right status
+  suffix rather than hiding it; the summary and day-group totals agreeing
+  with each other about excluding those items; the add form defaulting
+  its start-month field to the real current month and the chosen option
+  flowing into the created record; the edit sheet pre-filling start-month
+  and flipping its Pause/Resume label from the record's own state; and a
+  regression for the deliberate Resume divergence — clicking Resume
+  triggers the due-check synchronously in the same click rather than
+  waiting for the next app open.
 
 **The standing rule, going forward, same as Hours Ledger: every bug gets a
 test that would have caught it, written before the fix, watched to fail
@@ -1048,6 +1126,11 @@ ledger-paper plainness *is* the trust signal.
    the self-test suite (clamping, due-detection, auto-insert, sync merge,
    rendering) and an on-screen screenshot showing the actual auto-insert
    split correctly across due/not-yet-due items in the register. Not yet
+   real-device-verified by Sebastian. **Start month + pause added
+   (2026-08-22)** — see "Recurring design decisions" for the full shape;
+   verified via the self-test suite and an on-screen screenshot showing a
+   paused and a future-dated item both marked inactive in the list with
+   the summary/day totals correctly excluding them. Not yet
    real-device-verified by Sebastian.
 
 Do not add features that are not on this list without discussing them first.
