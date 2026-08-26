@@ -713,6 +713,53 @@ amount field (`.rec-amount`) the same day, once Sebastian asked for the
 same treatment there — same `type="text"` swap, same
 focus/blur/change trio, same reasoning throughout.
 
+## General fixes (2026-08-26)
+
+**The main register gets a Spent/Income toggle, matching the pattern
+already used on the Recurring screen — but consolidated with the existing
+Categories-panel toggle rather than added alongside it.** Before this, the
+register mixed both directions in one list, and a *separate* Spent/Income
+toggle (`railDir`) already existed on the Categories panel, filtering only
+that panel's rail. Sebastian confirmed a batch of design questions before
+any code:
+- **The toggle is unified, not duplicated.** One `.dirtoggle` (renamed
+  internally from `railDir` to `viewDir`, since it now scopes more than
+  the rail) drives both the register list and the category rail beside
+  it — moved to the Register panel-label, removed from the Categories
+  panel-label. Two independent toggles on one screen risked showing
+  contradictory filters (register on Expenses, rail on Income) with no
+  way to tell at a glance; a single control can't disagree with itself.
+- **State doesn't persist** — same as `railDir` and Recurring's own
+  `recurringDir` before it: a plain in-memory `let`, resets to `"expense"`
+  on every page load, never touches `Settings` or sync. Matching existing
+  precedent rather than introducing a third, differently-behaved toggle.
+- **Totals stay unfiltered.** The Summary panel, and the register's own
+  week/day IN/OUT headers, keep summing *both* directions regardless of
+  which side the toggle is showing — same rule Recurring's summary box
+  already follows (see "Recurring design decisions"). Concretely:
+  `renderRegister()` now computes two totals per week/day from the full
+  unfiltered month (`weekAllTotals`/`dayAllTotals`), separate from the
+  filtered `entries` array that decides which rows actually render — so a
+  day header can read "IN $3,000 · OUT $50" even while the list below it,
+  filtered to Expenses, shows only the $50 row.
+- **Budget UI is untouched** — out of scope by design, confirmed
+  explicitly: the category rail's own budget bars, the Total budgeted
+  footer, and the budget circles all live on separate screens/panels this
+  toggle was never wired to touch.
+- Empty-state copy became direction-aware ("No income logged yet this
+  month." / "No expenses logged yet this month.") instead of the old
+  always-mixed "Nothing logged yet this month.", matching the pattern
+  Recurring's own empty list message already used.
+- **Verification:** confirmed via the self-test suite (4 new regression
+  tests: direction filtering, totals staying unfiltered, the new empty-state
+  copy, and the rail following the same toggle — plus one pre-existing test
+  that assumed a mixed register and had to be updated to toggle direction
+  per assertion, now 226 tests/0 failing) and on-screen screenshots at both
+  390px and 1280px widths confirming no layout squeeze from moving the
+  toggle onto the (longer) "Register" label — the move actually gains room
+  on phone width, since `.cols` collapses to a single full-width column
+  below 1000px where the old 320px-capped aside toggle used to live.
+
 ## Testing before you claim it works
 
 There is an automated self-test suite — `money-ledger-selftest.html`,
@@ -814,7 +861,7 @@ establishing each one's "born" snapshot, before any of them touch Drive
 for real** — mirrors what tests 11–16 already do, just made explicit
 here since it's easy to get this exact ordering wrong by accident.
 
-**What it covers (218 tests as of 2026-08-22, up from 23):**
+**What it covers (226 tests as of 2026-08-26, up from 23):**
 - **Sync/merge** (the original 23): the `mergeRecords` algorithm directly
   (only-local, only-remote, both-edited, delete-vs-edit,
   identical/skewed/ambiguous timestamps, empty sides, seed-category id
@@ -860,7 +907,11 @@ here since it's easy to get this exact ordering wrong by accident.
   dropdown refreshing live on category create/delete without a reload
   (2026-08-11 regression). Empty states are asserted as empty (a dash,
   `ring-empty`) rather than as a rendered zero, for every circle that has
-  an empty state.
+  an empty state. **The register's own Spent/Income toggle (2026-08-26):**
+  the list filters by direction, week/day IN/OUT headers keep summing both
+  directions regardless of the filter, the empty-state copy is
+  direction-aware, and the category rail switches in lockstep since one
+  toggle now drives both — see "General fixes (2026-08-26)".
 - **Recurring:** day-of-month clamping (`clampDay`/`daysInMonth`, incl.
   leap-year February), `dueRecurring`'s pure due-detection logic (not yet
   due, due with nothing inserted, already inserted this month, an entry

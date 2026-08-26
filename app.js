@@ -198,7 +198,10 @@ let editingId = null;
 let editingRecurringId = null;
 let openPickerCatId = null;
 let openBcPickerKey = null;
-let railDir = "expense";
+// Drives both the register list and the category rail beside it — one
+// toggle, moved to the Register panel-label, since the two must never show
+// conflicting directions on the same screen.
+let viewDir = "expense";
 
 // ---------- utils ----------
 
@@ -928,13 +931,33 @@ function initMonthNav() {
 // ---------- rendering: register ----------
 
 function renderRegister() {
+  document.querySelectorAll("#viewDirToggle button").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.dataset.dir === viewDir));
+  });
+
   const box = document.getElementById("register");
-  const entries = entriesInMonth(viewYear, viewMonth).slice().sort((a, b) => (a.date < b.date ? 1 : -1));
+  const allEntries = entriesInMonth(viewYear, viewMonth);
+  const entries = allEntries.filter((e) => e.direction === viewDir).slice().sort((a, b) => (a.date < b.date ? 1 : -1));
 
   if (entries.length === 0) {
-    box.innerHTML = '<div class="register-empty">Nothing logged yet this month.<br>Use the form above — it takes a few seconds.</div>';
+    box.innerHTML = `<div class="register-empty">No ${viewDir === "income" ? "income" : "expenses"} logged yet this month.<br>Use the form above — it takes a few seconds.</div>`;
     return;
   }
+
+  // Week/day IN/OUT headers always sum every entry that month, both
+  // directions, not just whichever side is currently filtered below — same
+  // "totals always show both, unaffected by toggle" rule the Recurring
+  // screen's own summary box already follows.
+  const weekAllTotals = new Map(); // mondayIso -> {inc,exp} from ALL entries that week
+  const dayAllTotals = new Map(); // date -> {inc,exp} from ALL entries that day
+  allEntries.forEach((e) => {
+    const wk = isoDate(mondayOf(parseIso(e.date)));
+    if (!weekAllTotals.has(wk)) weekAllTotals.set(wk, { inc: 0, exp: 0 });
+    if (!dayAllTotals.has(e.date)) dayAllTotals.set(e.date, { inc: 0, exp: 0 });
+    const wt = weekAllTotals.get(wk), dt = dayAllTotals.get(e.date);
+    if (e.direction === "income") { wt.inc += e.amountMinor; dt.inc += e.amountMinor; }
+    else { wt.exp += e.amountMinor; dt.exp += e.amountMinor; }
+  });
 
   const weeks = new Map(); // mondayIso -> entries[]
   entries.forEach((e) => {
@@ -948,8 +971,7 @@ function renderRegister() {
   let html = "";
   weekKeys.forEach((wk) => {
     const rows = weeks.get(wk);
-    let inc = 0, exp = 0;
-    rows.forEach((e) => (e.direction === "income" ? (inc += e.amountMinor) : (exp += e.amountMinor)));
+    const { inc, exp } = weekAllTotals.get(wk);
     const label = weekRangeLabel(rows);
     html += `<div class="weekhead"><b>${label}</b><span>IN ${formatMoney(inc, currency)} · OUT ${formatMoney(exp, currency)}</span></div>`;
 
@@ -960,8 +982,7 @@ function renderRegister() {
     });
     Array.from(days.keys()).sort().reverse().forEach((dateKey) => {
       const dayRows = days.get(dateKey);
-      let dInc = 0, dExp = 0;
-      dayRows.forEach((e) => (e.direction === "income" ? (dInc += e.amountMinor) : (dExp += e.amountMinor)));
+      const { inc: dInc, exp: dExp } = dayAllTotals.get(dateKey);
       const dayLabel = parseIso(dateKey).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }).toUpperCase();
       html += `<div class="dayhead"><b>${dayLabel}</b><span>IN ${formatMoney(dInc, currency)} · OUT ${formatMoney(dExp, currency)}</span></div>`;
       dayRows.forEach((e) => {
@@ -1012,13 +1033,12 @@ function renderSummary() {
 // ---------- rendering: category rail ----------
 
 function renderCategoryRail() {
-  document.querySelectorAll("#railDirToggle button").forEach((b) => {
-    b.setAttribute("aria-pressed", String(b.dataset.dir === railDir));
-  });
-
-  const entries = entriesInMonth(viewYear, viewMonth).filter((e) => e.direction === railDir);
+  // The Spent/Income toggle itself lives once, on the Register panel-label
+  // (#viewDirToggle) — renderRegister() owns its aria-pressed state; this
+  // just reads the same viewDir it's driven by.
+  const entries = entriesInMonth(viewYear, viewMonth).filter((e) => e.direction === viewDir);
   const totals = sumByCategory(entries);
-  const cats = categoriesFor(railDir).slice().sort((a, b) => (totals.get(b.id) || 0) - (totals.get(a.id) || 0));
+  const cats = categoriesFor(viewDir).slice().sort((a, b) => (totals.get(b.id) || 0) - (totals.get(a.id) || 0));
   const maxTotal = Math.max(1, ...cats.map((c) => totals.get(c.id) || 0));
   const currency = state.settings.currency;
 
@@ -1127,8 +1147,8 @@ function renderCategoryRail() {
 }
 
 function initCategoryRail() {
-  document.querySelectorAll("#railDirToggle button").forEach((b) => {
-    b.addEventListener("click", () => { railDir = b.dataset.dir; openPickerCatId = null; renderCategoryRail(); });
+  document.querySelectorAll("#viewDirToggle button").forEach((b) => {
+    b.addEventListener("click", () => { viewDir = b.dataset.dir; openPickerCatId = null; renderRegister(); renderCategoryRail(); });
   });
   // Swatch clicks and clicks inside an open picker stop propagation (above),
   // so any click that reaches here is genuinely outside the open picker's row.
@@ -1150,11 +1170,11 @@ function initCategoryRail() {
     // has already run (JS event handlers are synchronous), so by the
     // time this check runs on the second call, the first category is
     // already in state.categories and gets caught here.
-    if (categoriesFor(railDir).some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+    if (categoriesFor(viewDir).some((c) => c.name.toLowerCase() === name.toLowerCase())) {
       toast(`"${name}" already exists`);
       return;
     }
-    createCategory({ name, direction: railDir, hue: Math.random() });
+    createCategory({ name, direction: viewDir, hue: Math.random() });
     saveState();
     input.value = "";
     renderAll();
@@ -2177,6 +2197,8 @@ function exposeTestHook() {
     SEED_CATEGORIES,
 
     formatMoney, formatCompact, parseAmountToMinor, monthTotals, sumByCategory,
+    getViewDir: () => viewDir,
+    setViewDir: (dir) => { viewDir = dir; renderAll(); },
 
     // Deterministic control over "which month is currently displayed" — the
     // real app defaults this to the real today's month at load, which is

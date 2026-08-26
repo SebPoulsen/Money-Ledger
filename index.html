@@ -180,6 +180,10 @@
     <main>
       <div class="panel-label">
         <span>Register</span>
+        <span id="viewDirToggle" class="dirtoggle" style="font-size:9px">
+          <button type="button" data-dir="expense" aria-pressed="true">Spent</button>
+          <button type="button" data-dir="income" aria-pressed="false">Income</button>
+        </span>
       </div>
       <div id="register" class="register"></div>
     </main>
@@ -193,10 +197,6 @@
       <section>
         <div class="panel-label">
           <span>Categories</span>
-          <span id="railDirToggle" class="dirtoggle" style="font-size:9px">
-            <button type="button" data-dir="expense" aria-pressed="true">Spent</button>
-            <button type="button" data-dir="income" aria-pressed="false">Income</button>
-          </span>
         </div>
         <div id="catList"></div>
         <form id="addCatForm" class="addcat">

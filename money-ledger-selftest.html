@@ -584,10 +584,14 @@ async function runTests(H,d){
     var inc=H.createEntry({date:"2026-08-03",amountMinor:100000,direction:"income",categoryId:incCat,note:""});
     var exp=H.createEntry({date:"2026-08-03",amountMinor:50000,direction:"expense",categoryId:expCat,note:""});
     H.renderAll();
+    // The register now filters by the Spent/Income toggle (added 2026-08-26)
+    // — each row only renders while the toggle matches its own direction.
+    H.setViewDir("income");
     var incAmt=d.querySelector('.entryrow[data-id="'+inc.id+'"] .amt');
-    var expAmt=d.querySelector('.entryrow[data-id="'+exp.id+'"] .amt');
     assert("an income row renders with a + sign and the income colour class",
       incAmt.textContent.charAt(0)==="+" && incAmt.classList.contains("income"));
+    H.setViewDir("expense");
+    var expAmt=d.querySelector('.entryrow[data-id="'+exp.id+'"] .amt');
     assert("an expense row renders with a − sign and no income colour class",
       expAmt.textContent.charAt(0)==="−" && !expAmt.classList.contains("income"));
   })();
@@ -1738,6 +1742,74 @@ async function runTests(H,d){
       H.getState().recurring.find(function(r){return r.id===rec.id;}).paused===false);
     assert("REGRESSION clicking Resume triggers the due-check synchronously in the same click — the entry appears immediately, not deferred to next app load",
       H.getState().entries.some(function(e){return !e.deleted && e.recurringId===rec.id;}));
+  })();
+
+  /* 74. REGRESSION (2026-08-26): the register's own Spent/Income toggle
+     (viewDir) filters the entry rows shown, given a month with both
+     directions logged. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var incCat=H.getState().categories.find(function(c){return c.direction==="income";}).id;
+    var expCat=H.getState().categories.find(function(c){return c.direction==="expense";}).id;
+    H.createEntry({date:"2026-08-05",amountMinor:100000,direction:"income",categoryId:incCat,note:"Paycheck"});
+    H.createEntry({date:"2026-08-05",amountMinor:5000,direction:"expense",categoryId:expCat,note:"Snacks"});
+    H.setViewDir("expense");
+    assert("REGRESSION register shows only expense rows when the toggle is on Spent",
+      d.querySelectorAll("#register .entryrow").length===1 && d.querySelector("#register .entryrow .note").textContent==="Snacks");
+    H.setViewDir("income");
+    assert("REGRESSION register shows only income rows when the toggle is on Income",
+      d.querySelectorAll("#register .entryrow").length===1 && d.querySelector("#register .entryrow .note").textContent==="Paycheck");
+  })();
+
+  /* 75. REGRESSION (2026-08-26): the register's week/day IN/OUT headers keep
+     summing BOTH directions regardless of which side the toggle filters the
+     list to — same "totals always show both, unaffected by toggle" rule
+     Recurring's own summary box already follows (see CLAUDE.md). */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var incCat=H.getState().categories.find(function(c){return c.direction==="income";}).id;
+    var expCat=H.getState().categories.find(function(c){return c.direction==="expense";}).id;
+    H.createEntry({date:"2026-08-05",amountMinor:100000,direction:"income",categoryId:incCat,note:""});
+    H.createEntry({date:"2026-08-05",amountMinor:5000,direction:"expense",categoryId:expCat,note:""});
+    H.setViewDir("expense");
+    var head=d.querySelector(".dayhead span").textContent.split("·");
+    assert("REGRESSION the day header's IN total stays correct even while the toggle filters the list down to Expenses only",
+      digits(head[0])==="1000");
+    assert("REGRESSION the day header's OUT total stays correct while filtered to Expenses",
+      digits(head[1])==="50");
+  })();
+
+  /* 76. the register's empty state reads direction-aware copy ("No income
+     logged yet this month") rather than the old always-mixed "Nothing
+     logged yet this month", matching the pattern Recurring's own empty
+     state ("No recurring X yet.") already uses. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var expCat=H.getState().categories.find(function(c){return c.direction==="expense";}).id;
+    H.createEntry({date:"2026-08-05",amountMinor:5000,direction:"expense",categoryId:expCat,note:""});
+    H.setViewDir("income");
+    assert("register's empty state reads \"No income logged yet\" when filtered to Income with only expenses logged this month",
+      d.querySelector("#register .register-empty").textContent.indexOf("No income logged yet")===0);
+  })();
+
+  /* 77. REGRESSION (2026-08-26): the category rail is driven by the same
+     toggle as the register now — one control, not two. Consolidated from
+     the old standalone #railDirToggle on the Categories panel-label; the
+     unified toggle moved to #viewDirToggle on the Register panel-label. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.setViewDir("income");
+    var names=Array.from(d.querySelectorAll("#catList .cat .nm")).map(function(el){return el.value;});
+    assert("REGRESSION setting the register toggle to Income also switches the category rail to income categories",
+      names.indexOf("Salary")!==-1 && names.indexOf("Groceries")===-1);
+    assert("REGRESSION the old standalone #railDirToggle no longer exists — one toggle now drives both panels",
+      d.getElementById("railDirToggle")===null);
+    assert("the unified toggle lives at #viewDirToggle, on the Register panel-label",
+      d.getElementById("viewDirToggle")!==null);
   })();
 
   return results;
