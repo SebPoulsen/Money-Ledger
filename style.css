@@ -75,8 +75,11 @@ button{cursor:pointer}
 .dot{width:11px;height:11px;flex:none;border:1px solid rgba(0,0,0,.3);display:block}
 
 /* cols layout — main register + rail, echoes Hours Ledger's grid+rail without copying the grid */
-.cols{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:26px;margin-top:26px;align-items:start}
-@media(max-width:1000px){.cols{grid-template-columns:1fr}}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) 320px;grid-template-areas:"reg sum" "reg rail";gap:26px;margin-top:26px;align-items:start}
+.cols>main{grid-area:reg}
+.cols>.summarysec{grid-area:sum}
+.cols>.rail{grid-area:rail}
+@media(max-width:1000px){.cols{grid-template-columns:1fr;grid-template-areas:"sum" "reg" "rail"}}
 .panel-label{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--ink);padding-bottom:6px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:10px}
 
 /* summary gauge */
