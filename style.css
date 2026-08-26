@@ -75,7 +75,14 @@ button{cursor:pointer}
 .dot{width:11px;height:11px;flex:none;border:1px solid rgba(0,0,0,.3);display:block}
 
 /* cols layout — main register + rail, echoes Hours Ledger's grid+rail without copying the grid */
-.cols{display:grid;grid-template-columns:minmax(0,1fr) 320px;grid-template-areas:"reg sum" "reg rail";gap:26px;margin-top:26px;align-items:start}
+/* grid-template-rows:auto 1fr (not the default two auto tracks) matters here:
+   main spans both rows, so without it Grid distributes main's extra needed
+   height evenly across both auto rows, stretching summary's row past its own
+   content and leaving a gap before rail. 1fr on row 2 absorbs all of that
+   slack instead, so row 1 sizes to summary's real height. Verified this
+   doesn't leak into the mobile media query below (.cols is intrinsic-height
+   there too, so 1fr resolves the same as auto) — 2026-08-26. */
+.cols{display:grid;grid-template-columns:minmax(0,1fr) 320px;grid-template-areas:"reg sum" "reg rail";grid-template-rows:auto 1fr;gap:26px;margin-top:26px;align-items:start}
 .cols>main{grid-area:reg}
 .cols>.summarysec{grid-area:sum}
 .cols>.rail{grid-area:rail}
