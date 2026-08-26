@@ -759,6 +759,9 @@ any code:
   toggle onto the (longer) "Register" label — the move actually gains room
   on phone width, since `.cols` collapses to a single full-width column
   below 1000px where the old 320px-capped aside toggle used to live.
+  **Confirmed working live on `main` (2026-08-26):** merged and deployed,
+  confirmed by Sebastian on the real site — not just verified via the
+  self-test suite and screenshots pre-merge.
 
 ## Testing before you claim it works
 
@@ -1216,6 +1219,23 @@ Do not add features that are not on this list without discussing them first.
   warning screen on "Connect Google Drive" — decide together whether that's
   acceptable for an early public v1 or whether to gate the sync button
   behind something until verification clears.
+  - **Research finding (2026-08-26):** checked `drive.file`
+    (`https://www.googleapis.com/auth/drive.file`, the exact scope this app
+    requests — see `DRIVE_SCOPE` in `app.js`) directly in Google Auth
+    Platform's Data Access page and confirmed it's classified
+    **non-sensitive** — not sensitive, not restricted. That means the
+    "days to weeks" review above is the standard brand-verification path
+    (privacy policy page, consistent branding, Search Console domain
+    verification, a written scope justification, a demo video) — **not**
+    the much heavier restricted-scope path, which requires an annual
+    third-party security assessment and would be a real barrier for a
+    free hobby project. This is a finding, not a completed action —
+    nothing has actually been submitted for verification yet. Hours Ledger
+    requests the identical `drive.file` scope for its own Drive sync
+    (confirmed by reading its `app.js`), so this same finding applies
+    there too — mirrored in Hours Ledger's own CLAUDE.md rather than only
+    living here, since neither app's verification has actually been
+    submitted as of this date.
 - GitHub Gist was considered and rejected as the sync target over Google
   Drive: a "secret" gist is unlisted, not access-controlled — anyone with
   the URL can read it. Worth revisiting only if a stronger case for it shows
