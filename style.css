@@ -86,7 +86,18 @@ button{cursor:pointer}
 .cols>main{grid-area:reg}
 .cols>.summarysec{grid-area:sum}
 .cols>.rail{grid-area:rail}
-@media(max-width:1000px){.cols{grid-template-columns:1fr;grid-template-areas:"sum" "reg" "rail"}}
+/* minmax(0,1fr), not bare 1fr — a bare 1fr track's automatic minimum size
+   still defaults to its content's min-content width (same rule the desktop
+   column above is already guarded against). Real-device diagnosis
+   (2026-08-26): on iPhone Chrome (WebKit under the hood, like all iOS
+   browsers) main's .panel-label/.dirtoggle content computed a few px wider
+   than the 393px viewport and, with no minmax(0,...) floor here, dragged
+   the whole column past the edge — confirmed by forcing wide content in
+   Chrome/Blink too (main grew to 451px unguarded, snapped back to 353px
+   with this fix, byte-identical to baseline for ordinary content). This
+   line was already bare 1fr before tonight's Summary-panel change, so it's
+   a pre-existing gap, not a regression from that commit. */
+@media(max-width:1000px){.cols{grid-template-columns:minmax(0,1fr);grid-template-areas:"sum" "reg" "rail"}}
 .panel-label{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--ink);padding-bottom:6px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:10px}
 
 /* summary gauge */
