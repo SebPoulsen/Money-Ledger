@@ -190,7 +190,18 @@ button{cursor:pointer}
 .register{border:1px solid var(--ink)}
 .weekhead{display:flex;justify-content:space-between;align-items:baseline;background:var(--stripe);padding:8px 12px;border-bottom:1px solid var(--ink);font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .weekhead b{font-family:var(--mono);font-size:12px;color:var(--ink);letter-spacing:0;text-transform:none}
-.dayhead{display:flex;justify-content:space-between;align-items:baseline;padding:6px 12px 5px;border-bottom:1px solid var(--rule-soft);font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+/* day header: one step darker than a plain row divider (was identical to
+   .entryrow's own border, so it carried no more weight than a row boundary
+   — see CLAUDE.md "General fixes" for the day-grouping legibility pass)
+   plus a physical gap before each new day group. Deliberately still well
+   short of .weekhead (no fill, no ink-black border, no larger type) — the
+   ask was restful, not as loud as the week separator. margin-top applies
+   uniformly, including right after .weekhead — screenshotted a busy day
+   (8 entries) and a week boundary to confirm the gap doesn't compound on a
+   dense day and doesn't read as an orphaned gap under .weekhead; both held
+   up at 14px. Applies to the Recurring page's day-of-month groups too, for
+   free — same .dayhead element, not a lookalike. */
+.dayhead{display:flex;justify-content:space-between;align-items:baseline;padding:6px 12px 5px;border-bottom:1px solid var(--rule);margin-top:14px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
 .dayhead b{font-family:var(--mono);font-size:10.5px;color:var(--ink);letter-spacing:.02em}
 .entryrow{display:flex;align-items:center;gap:10px;padding:9px 12px 9px 22px;border-bottom:1px solid var(--rule-soft);text-align:left;background:transparent;border-left:0;border-right:0;border-top:0;width:100%;font-size:13px}
 .entryrow:hover{background:var(--stripe)}
