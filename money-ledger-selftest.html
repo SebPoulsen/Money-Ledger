@@ -1812,6 +1812,272 @@ async function runTests(H,d){
       d.getElementById("viewDirToggle")!==null);
   })();
 
+  /* ===== category filter (register + Recurring) ===== */
+
+  /* 78. register: selecting one category narrows the visible rows to that
+     category; the direction toggle still composes (AND, not OR). */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.createEntry({date:"2026-08-05",amountMinor:5000,direction:"expense",categoryId:"seed-groceries",note:""});
+    H.createEntry({date:"2026-08-05",amountMinor:3000,direction:"expense",categoryId:"seed-transport",note:""});
+    H.createEntry({date:"2026-08-05",amountMinor:100000,direction:"income",categoryId:"seed-salary",note:""});
+    H.setViewDir("expense");
+    H.setRegisterCatFilter(["seed-groceries"]);
+    var rows=d.querySelectorAll("#register .entryrow");
+    assert("filtering to one category shows only that category's rows",
+      rows.length===1 && rows[0].querySelector(".cat").textContent==="Groceries");
+  })();
+
+  /* 79. register: multi-select — two categories selected shows rows from
+     both. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.createEntry({date:"2026-08-05",amountMinor:5000,direction:"expense",categoryId:"seed-groceries",note:""});
+    H.createEntry({date:"2026-08-05",amountMinor:3000,direction:"expense",categoryId:"seed-transport",note:""});
+    H.createEntry({date:"2026-08-05",amountMinor:1000,direction:"expense",categoryId:"seed-dining",note:""});
+    H.setViewDir("expense");
+    H.setRegisterCatFilter(["seed-groceries","seed-transport"]);
+    assert("selecting two categories shows rows from both, and nothing else",
+      d.querySelectorAll("#register .entryrow").length===2);
+  })();
+
+  /* 80. register: the chip row offers only categories with at least one
+     entry this month AND in the current direction — not an other-month
+     category, not an other-direction one. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.createEntry({date:"2026-08-05",amountMinor:5000,direction:"expense",categoryId:"seed-groceries",note:""});
+    H.createEntry({date:"2026-08-05",amountMinor:3000,direction:"expense",categoryId:"seed-transport",note:""});
+    H.createEntry({date:"2026-07-05",amountMinor:2000,direction:"expense",categoryId:"seed-dining",note:""});
+    H.createEntry({date:"2026-08-05",amountMinor:100000,direction:"income",categoryId:"seed-salary",note:""});
+    H.setViewDir("expense");
+    var ids=Array.from(d.querySelectorAll("#registerFilter button")).map(function(b){return b.dataset.id;});
+    assert("chip row is shown when eligible categories exist", d.getElementById("registerFilter").hidden===false);
+    assert("chip row offers this-month, this-direction categories",
+      ids.indexOf("seed-groceries")!==-1 && ids.indexOf("seed-transport")!==-1);
+    assert("chip row excludes a category with entries only in another month",
+      ids.indexOf("seed-dining")===-1);
+    assert("chip row excludes an other-direction category",
+      ids.indexOf("seed-salary")===-1);
+    assert("chip row has a leading All pill", ids.indexOf("")===0);
+  })();
+
+  /* 81. register: driving the chip row through real DOM clicks — All pill
+     pressed at baseline, a category click adds it, the All click clears. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.createEntry({date:"2026-08-05",amountMinor:5000,direction:"expense",categoryId:"seed-groceries",note:""});
+    H.createEntry({date:"2026-08-05",amountMinor:3000,direction:"expense",categoryId:"seed-transport",note:""});
+    H.setViewDir("expense");
+    assert("at baseline the All pill is pressed",
+      d.querySelector("#registerFilter button.cf-all").getAttribute("aria-pressed")==="true");
+    d.querySelector('#registerFilter button[data-id="seed-groceries"]').click();
+    assert("clicking a category pill adds it to the filter",
+      JSON.stringify(H.getRegisterCatFilter())===JSON.stringify(["seed-groceries"]) &&
+      d.querySelectorAll("#register .entryrow").length===1);
+    assert("the clicked pill is now pressed and All is not",
+      d.querySelector('#registerFilter button[data-id="seed-groceries"]').getAttribute("aria-pressed")==="true" &&
+      d.querySelector("#registerFilter button.cf-all").getAttribute("aria-pressed")==="false");
+    d.querySelector("#registerFilter button.cf-all").click();
+    assert("clicking All clears back to baseline",
+      H.getRegisterCatFilter().length===0 && d.querySelectorAll("#register .entryrow").length===2);
+  })();
+
+  /* 82. register: day/week headers collapse to a single "Selected <sum>"
+     when a filter is active (matching the visible rows), and read the
+     unchanged "IN … · OUT …" both-direction totals when not. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.createEntry({date:"2026-08-05",amountMinor:5000,direction:"expense",categoryId:"seed-groceries",note:""});
+    H.createEntry({date:"2026-08-05",amountMinor:3000,direction:"expense",categoryId:"seed-transport",note:""});
+    H.createEntry({date:"2026-08-05",amountMinor:100000,direction:"income",categoryId:"seed-salary",note:""});
+    H.setViewDir("expense");
+    var noFilterDay=d.querySelector("#register .dayhead span").textContent;
+    var parts=noFilterDay.split("·");
+    assert("unfiltered day header still reads IN … · OUT … from both directions",
+      noFilterDay.indexOf("IN")===0 && digits(parts[0])==="1000" && digits(parts[1])==="80");
+    var noFilterWeek=d.querySelector("#register .weekhead span").textContent;
+    assert("unfiltered week header likewise reads IN … · OUT …", noFilterWeek.indexOf("IN")===0);
+    H.setRegisterCatFilter(["seed-groceries"]);
+    var filteredDay=d.querySelector("#register .dayhead span").textContent;
+    assert("filtered day header collapses to Selected <sum of shown rows>",
+      filteredDay.indexOf("Selected")===0 && digits(filteredDay)==="50");
+    var filteredWeek=d.querySelector("#register .weekhead span").textContent;
+    assert("filtered week header collapses to Selected <sum of shown rows>",
+      filteredWeek.indexOf("Selected")===0 && digits(filteredWeek)==="50");
+    H.setRegisterCatFilter([]);
+    assert("clearing the filter restores the IN/OUT header",
+      d.querySelector("#register .dayhead span").textContent.indexOf("IN")===0);
+  })();
+
+  /* 83. register: switching the Spent/Income toggle clears the active
+     category filter (expense/income category sets are disjoint). */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.createEntry({date:"2026-08-05",amountMinor:5000,direction:"expense",categoryId:"seed-groceries",note:""});
+    H.createEntry({date:"2026-08-05",amountMinor:100000,direction:"income",categoryId:"seed-salary",note:""});
+    H.setViewDir("expense");
+    H.setRegisterCatFilter(["seed-groceries"]);
+    d.querySelector('#viewDirToggle button[data-dir="income"]').click();
+    assert("flipping the direction toggle empties the category filter",
+      H.getRegisterCatFilter().length===0);
+    d.querySelector('#viewDirToggle button[data-dir="expense"]').click();
+    assert("and the header is back to the IN/OUT form after the flip",
+      d.querySelector("#register .dayhead span").textContent.indexOf("IN")===0);
+  })();
+
+  /* 84. register: a filter active but resolving to zero rows this month
+     shows the dedicated empty state, keeps the chip row visible, and
+     offers a clear-filter button. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.createEntry({date:"2026-08-05",amountMinor:5000,direction:"expense",categoryId:"seed-groceries",note:""});
+    H.setViewDir("expense");
+    H.setRegisterCatFilter(["seed-transport"]); // nothing logged against Transport this month
+    assert("zero-match filter shows the 'No entries in the selected categories' empty state",
+      d.querySelector("#register .register-empty").textContent.indexOf("No entries in the selected categories this month")===0);
+    assert("the chip row stays visible so the filter can be seen/cleared",
+      d.getElementById("registerFilter").hidden===false);
+    var clr=d.getElementById("registerFilterClear");
+    assert("a clear-filter button is offered in the empty state", !!clr);
+    clr.click();
+    assert("clicking it clears the filter and the entries come back",
+      H.getRegisterCatFilter().length===0 && d.querySelectorAll("#register .entryrow").length===1);
+  })();
+
+  /* 85. register: with entries present and no filter, the chip row is
+     shown (discoverable) with the All pill pressed — baseline is purely
+     additive, the register list itself is unchanged. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.createEntry({date:"2026-08-05",amountMinor:5000,direction:"expense",categoryId:"seed-groceries",note:"Snacks"});
+    H.setViewDir("expense");
+    assert("no filter: chip row visible with All pressed",
+      d.getElementById("registerFilter").hidden===false &&
+      d.querySelector("#registerFilter button.cf-all").getAttribute("aria-pressed")==="true");
+    assert("no filter: the register renders exactly as before (one row, note intact)",
+      d.querySelectorAll("#register .entryrow").length===1 &&
+      d.querySelector("#register .entryrow .note").textContent==="Snacks");
+  })();
+
+  /* 86. category rail: selected categories get a passive .selected marker;
+     the rail's own per-category totals stay unfiltered regardless. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.createEntry({date:"2026-08-05",amountMinor:5000,direction:"expense",categoryId:"seed-groceries",note:""});
+    H.createEntry({date:"2026-08-05",amountMinor:3000,direction:"expense",categoryId:"seed-transport",note:""});
+    H.setViewDir("expense");
+    H.setRegisterCatFilter(["seed-groceries"]);
+    var groc=d.querySelector('#catList .cat[data-id="seed-groceries"]');
+    var trans=d.querySelector('#catList .cat[data-id="seed-transport"]');
+    assert("the filtered category's rail row is marked .selected",
+      groc.classList.contains("selected") && !trans.classList.contains("selected"));
+    assert("a non-selected category's rail total is still its real month total (unfiltered)",
+      digits(trans.textContent)==="30");
+  })();
+
+  /* 87. Recurring: selecting a category narrows the list and the day-group
+     total (with the same "Selected" prefix), while the summary box stays
+     unaffected — same rule as the register's monthly category table. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.createRecurring({name:"Netflix",amountMinor:8900,direction:"expense",categoryId:"seed-subscriptions",dayOfMonth:10,startMonth:"2020-01"});
+    H.createRecurring({name:"Gym",amountMinor:29900,direction:"expense",categoryId:"seed-health",dayOfMonth:10,startMonth:"2020-01"});
+    H.setRecurringDir("expense");
+    H.setRecurringCatFilter(["seed-subscriptions"]);
+    var rows=d.querySelectorAll("#recurringList .entryrow");
+    assert("Recurring list narrows to the selected category",
+      rows.length===1 && rows[0].querySelector(".cat").textContent==="Subscriptions");
+    var dayHead=d.querySelector("#recurringList .dayhead span").textContent;
+    assert("Recurring day-group total follows the filter, prefixed Selected",
+      dayHead.indexOf("Selected")===0 && digits(dayHead)==="89");
+    var expFig=d.querySelector("#recurringSummaryBox .summary-row:nth-child(2) b").textContent;
+    assert("Recurring summary box is unaffected by the filter (still sums both items)",
+      digits(expFig)==="388");
+  })();
+
+  /* 88. Recurring: a category used only by a paused / not-yet-started item
+     is still offered in the chip row and still filterable. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    var paused=H.createRecurring({name:"Gym",amountMinor:29900,direction:"expense",categoryId:"seed-health",dayOfMonth:10,startMonth:"2020-01"});
+    H.pauseRecurring(paused.id);
+    H.createRecurring({name:"Netflix",amountMinor:8900,direction:"expense",categoryId:"seed-subscriptions",dayOfMonth:10,startMonth:"2020-01"});
+    H.setRecurringDir("expense");
+    var ids=Array.from(d.querySelectorAll("#recurringFilter button")).map(function(b){return b.dataset.id;});
+    assert("a paused item's category is offered in the Recurring chip row",
+      ids.indexOf("seed-health")!==-1);
+    H.setRecurringCatFilter(["seed-health"]);
+    var row=d.querySelector('#recurringList .entryrow[data-id="'+paused.id+'"]');
+    assert("filtering to it shows that (inactive-marked) row",
+      !!row && row.classList.contains("inactive"));
+  })();
+
+  /* 89. Recurring: switching the Recurring screen's own Spent/Income
+     toggle clears its category filter. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.createRecurring({name:"Gym",amountMinor:29900,direction:"expense",categoryId:"seed-health",dayOfMonth:10,startMonth:"2020-01"});
+    H.setRecurringDir("expense");
+    H.setRecurringCatFilter(["seed-health"]);
+    d.querySelector('#recurringDirToggle button[data-dir="income"]').click();
+    assert("flipping the Recurring direction toggle empties its category filter",
+      H.getRecurringCatFilter().length===0);
+  })();
+
+  /* 90. isolation: the filter is view-state only — never in the persisted/
+     synced State blob (hard rules: schema never changes shape for this). */
+  (function(){
+    H.resetState();
+    H.setRegisterCatFilter(["seed-groceries"]);
+    H.setRecurringCatFilter(["seed-health"]);
+    var st=H.getState();
+    assert("registerCatFilter is not a field on State",
+      st.registerCatFilter===undefined && st.recurringCatFilter===undefined);
+    assert("no filter key leaks into a serialized State (what sync would push)",
+      JSON.stringify(st).indexOf("CatFilter")===-1);
+  })();
+
+  /* 91. month-nav recomputes which categories the chip row offers from the
+     NEW month's entries (never stale), while leaving the filter Set itself
+     untouched — the user's explicit ask. */
+  (function(){
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    H.createEntry({date:"2026-08-05",amountMinor:5000,direction:"expense",categoryId:"seed-groceries",note:""});
+    H.createEntry({date:"2026-08-05",amountMinor:3000,direction:"expense",categoryId:"seed-transport",note:""});
+    H.createEntry({date:"2026-07-05",amountMinor:2000,direction:"expense",categoryId:"seed-dining",note:""});
+    H.setViewDir("expense");
+    H.setRegisterCatFilter(["seed-groceries"]);
+    var aug=Array.from(d.querySelectorAll("#registerFilter button")).map(function(b){return b.dataset.id;});
+    assert("August's chip row offers August's categories",
+      aug.indexOf("seed-groceries")!==-1 && aug.indexOf("seed-transport")!==-1 && aug.indexOf("seed-dining")===-1);
+    d.getElementById("prevMonth").click(); // -> July 2026
+    var jul=Array.from(d.querySelectorAll("#registerFilter button")).map(function(b){return b.dataset.id;});
+    assert("after month-nav the chip row recomputes for July — Dining now, Groceries/Transport gone",
+      jul.indexOf("seed-dining")!==-1 && jul.indexOf("seed-groceries")===-1 && jul.indexOf("seed-transport")===-1);
+    assert("month-nav did not touch the filter Set itself",
+      JSON.stringify(H.getRegisterCatFilter())===JSON.stringify(["seed-groceries"]));
+    assert("July with a Groceries filter and no Groceries entries shows the zero-match empty state",
+      d.querySelector("#register .register-empty").textContent.indexOf("No entries in the selected categories")===0);
+    d.getElementById("nextMonth").click(); // -> back to August
+    assert("navigating back restores the still-active Groceries filter",
+      JSON.stringify(H.getRegisterCatFilter())===JSON.stringify(["seed-groceries"]) &&
+      d.querySelectorAll("#register .entryrow").length===1);
+  })();
+
   return results;
 }
 })();

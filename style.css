@@ -214,10 +214,26 @@ button{cursor:pointer}
 .entryrow .amt.over{color:var(--flag)}
 .entryrow.inactive{opacity:.55}
 .register-empty{padding:26px 14px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.7}
+.linkbtn{background:transparent;border:0;padding:0;font:inherit;color:var(--ink);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+
+/* opt-in category filter — a wrapping row of pressed/unpressed pills above
+   the register (and the Recurring list), reusing the .dirtoggle pressed
+   language but as individually-bordered chips. View-state only; hidden in
+   print since it's a control, not data. */
+.catfilter{display:flex;flex-wrap:wrap;gap:6px;margin:-2px 0 12px}
+.catfilter button{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);background:transparent;border:1px solid var(--rule);padding:5px 9px}
+.catfilter button:hover{border-color:var(--ink)}
+.catfilter button[aria-pressed=true]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.catfilter button .dot{width:8px;height:8px}
+.catfilter button[aria-pressed=true] .dot{border-color:var(--paper)}
 
 /* category rail rows — totals + inline edit, same bones as Hours Ledger's .cat/.tot */
 .rail section{margin-bottom:28px}
 .cat{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--rule-soft);position:relative}
+/* passive highlight when this category is in the register's active filter —
+   the rail's own totals are never filtered, this is a visual echo only */
+.cat.selected{box-shadow:inset 2px 0 0 var(--ink)}
+.cat.selected .nm{font-weight:600}
 .cat .nm{flex:1;font-size:13px;font-weight:500;background:transparent;border:0;padding:2px 0;min-width:0}
 .cat .nm:focus{outline:0;border-bottom:1px solid var(--ink)}
 .cat .sw{width:22px;height:22px;flex:none;padding:0;border:1px solid rgba(0,0,0,.3)}
@@ -312,7 +328,7 @@ button{cursor:pointer}
   .tools .ghost{min-width:0}
 }
 @media print{
-  .monthnav,.tools,.hint,.status,.panel-label button,.cat .sw,.cat .del,.warn,.fab,.quickadd{display:none!important}
+  .monthnav,.tools,.hint,.status,.panel-label button,.cat .sw,.cat .del,.warn,.fab,.quickadd,.catfilter{display:none!important}
   body{background:#fff}.wrap{padding:0}.cols{grid-template-columns:1fr 240px}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
