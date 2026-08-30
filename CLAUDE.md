@@ -542,6 +542,72 @@ on:
   standing regression case in the self-test suite, not just asserted in
   this doc.
 
+## Category filter design decisions (2026-08-28)
+
+**An opt-in category filter on the register and Recurring screen, replacing
+an earlier "auto-group same-category entries" idea.** The real problem was
+scanning the register for everything under one category when entries aren't
+adjacent. Auto-reordering was rejected — it fights the app's "log reality,
+don't infer" ethos. Instead: a filter layered on top, changing what's
+shown, never what's logged or its order. Design settled through a batch of
+clarifying questions before any code — see the conversation for the full
+set. What landed:
+- **UI is an inline chip row** (`.catfilter`), a wrapping row of
+  pressed/unpressed pills above the register list (and the Recurring
+  list), reusing `.dirtoggle`'s pressed language as individually-bordered
+  chips with a category-colour dot. Chosen over a popout panel (less
+  discoverable) and a rail-embedded control (rail rows are already fully
+  allocated to rename/recolour/delete). A leading "All" pill clears back
+  to baseline.
+- **View-state only, zero schema/sync change.** Two module-level `Set`s
+  (`registerCatFilter`, `recurringCatFilter`), reset on reload, never in
+  `State`/`localStorage`/`mergeRecords` — exact same discipline as
+  `viewDir`/`recurringDir`. Confirmed explicitly: no `Entry`/`Category`/
+  `Recurring`/`Settings` field, no migration. `resetState()` in the test
+  hook clears them too, for test isolation.
+- **Switching the Spent/Income toggle clears the active filter** — expense
+  and income categories are disjoint, so a carried-over selection could
+  only ever resolve to nothing. Not per-direction memory; just cleared.
+- **The chip row offers only categories with ≥1 entry this month in the
+  current direction**, recomputed on every render — so month-nav always
+  re-derives the offered set from the new month (never stale), while the
+  filter `Set` itself is untouched by month-nav (navigate away and back,
+  the selection is still there). A still-selected id whose category has
+  nothing in the current month simply has no pill and contributes to the
+  zero-match empty state.
+- **Day/week headers collapse when a filter is active.** Unfiltered, they
+  keep the existing `IN … · OUT …` both-direction totals (the 2026-08-26
+  decision stands). Filtered, they show a single figure of the visible
+  rows, labelled with the existing IN/OUT vocabulary for whichever side is
+  being viewed — `OUT <sum>` in Expense view, `IN <sum>` in Income view
+  (2026-08-30; first shipped as a generic `Selected <sum>` prefix, changed
+  because the filter's categories are already direction-scoped, so this is
+  just the same concept the header already had a word for — the other side
+  of a full `IN … · OUT …` would only ever be zero). Recurring's day-group
+  total gets the same IN/OUT prefix.
+- **Summary panel and the category rail's own totals stay unfiltered** —
+  same rule as the monthly category table being unaffected. The rail
+  *does* lightly mark selected categories (`.cat.selected`, an inset ink
+  bar + bold name) as a passive echo of the chip row — no second control,
+  the rail never *sets* the filter.
+- **Recurring's summary box is unaffected**; its list and day-group totals
+  follow the filter. Categories used only by paused / not-yet-started
+  Recurring items are still offered as chips — they're visible in the
+  list, so they should be filterable.
+- **Zero-match empty state:** "No entries in the selected categories this
+  month." with the chip row still visible and a `Show all categories`
+  clear button. Same for Recurring.
+- **Verification:** 14 self-test cases (register direction+category
+  compose, multi-select, chip eligibility, header collapse vs. the
+  unchanged IN/OUT baseline, direction-clears-filter, zero-match empty
+  state, rail highlight with rail totals staying unfiltered, Recurring
+  parity, paused-item category still filterable, month-nav re-derivation,
+  view-state not in `State`). Suite: 265 tests / 0 failing. Screenshotted
+  on-screen (headless Chrome via CDP, iframe/emulation widths) at 390px
+  and 1280px, both screens, filtered and unfiltered. **Not yet
+  real-device-verified by Sebastian** — built on a branch
+  (`category-filter`), pending a phone check at 390px before merge.
+
 ## General fixes (2026-08-12)
 
 **Recurring items now render as one-line `.entryrow` rows with editing
@@ -864,7 +930,7 @@ establishing each one's "born" snapshot, before any of them touch Drive
 for real** — mirrors what tests 11–16 already do, just made explicit
 here since it's easy to get this exact ordering wrong by accident.
 
-**What it covers (226 tests as of 2026-08-26, up from 23):**
+**What it covers (265 tests as of 2026-08-28, up from 23):**
 - **Sync/merge** (the original 23): the `mergeRecords` algorithm directly
   (only-local, only-remote, both-edited, delete-vs-edit,
   identical/skewed/ambiguous timestamps, empty sides, seed-category id
@@ -915,6 +981,17 @@ here since it's easy to get this exact ordering wrong by accident.
   directions regardless of the filter, the empty-state copy is
   direction-aware, and the category rail switches in lockstep since one
   toggle now drives both — see "General fixes (2026-08-26)".
+  **The category filter (2026-08-28):** direction + selected categories
+  compose (AND), multi-select, chip eligibility (this-month/this-direction
+  only), day/week headers collapsing to `OUT <sum>` / `IN <sum>` when
+  filtered while the unfiltered `IN … · OUT …` baseline is untouched, the direction
+  toggle clearing the filter, the zero-match empty state, the rail's
+  passive `.selected` highlight with rail totals staying unfiltered,
+  month-nav re-deriving chip eligibility without touching the filter set,
+  and the filter never appearing in a serialized `State`. Recurring
+  parity: list + day-group totals follow the filter, summary box doesn't,
+  a paused item's category is still offered — see "Category filter design
+  decisions".
 - **Recurring:** day-of-month clamping (`clampDay`/`daysInMonth`, incl.
   leap-year February), `dueRecurring`'s pure due-detection logic (not yet
   due, due with nothing inserted, already inserted this month, an entry

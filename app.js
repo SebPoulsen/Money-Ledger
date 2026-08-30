@@ -203,6 +203,16 @@ let openBcPickerKey = null;
 // conflicting directions on the same screen.
 let viewDir = "expense";
 
+// Opt-in category filter for the register (see "category-filter" work).
+// View-state only — a set of category ids to narrow the visible rows to;
+// empty means "show everything" (baseline, unchanged). Never persisted,
+// never synced, reset on reload — same discipline as viewDir/recurringDir.
+// Cleared whenever the direction toggle flips, since expense and income
+// categories are disjoint. recurringCatFilter is the Recurring screen's
+// own independent equivalent.
+const registerCatFilter = new Set();
+const recurringCatFilter = new Set();
+
 // ---------- utils ----------
 
 function uid() {
@@ -928,6 +938,55 @@ function initMonthNav() {
   });
 }
 
+// ---------- rendering: category filter chip row ----------
+
+// Renders the opt-in category-filter chip row into `container` from `pool`
+// (a list of records carrying categoryId + amountMinor — Entry rows for the
+// register, Recurring records for the Recurring screen). One pill per
+// category actually present in `pool`, ordered by total amount descending
+// to match the category rail, plus a leading "All" pill that clears back to
+// baseline. Toggling a pill mutates `filterSet` in place and calls
+// `onChange`.
+//
+// The row is rebuilt on every render of its screen — so navigating to a
+// different month re-derives which categories are offered from THAT month's
+// records, never stale. `filterSet` itself is untouched here: a still-
+// selected id whose category has nothing in the current pool simply has no
+// pill, and shows up instead as the "no matches" empty state; navigating
+// back restores its pill, still pressed.
+function renderCatFilter(container, pool, filterSet, onChange) {
+  const totals = new Map();
+  pool.forEach((r) => totals.set(r.categoryId, (totals.get(r.categoryId) || 0) + r.amountMinor));
+  const cats = Array.from(totals.keys())
+    .map((id) => catById(id))
+    .filter(Boolean)
+    .sort((a, b) => (totals.get(b.id) || 0) - (totals.get(a.id) || 0));
+
+  if (cats.length === 0) {
+    container.hidden = true;
+    container.innerHTML = "";
+    return;
+  }
+  container.hidden = false;
+
+  let html = `<button type="button" class="cf-all" data-id="" aria-pressed="${filterSet.size === 0}">All</button>`;
+  cats.forEach((c) => {
+    html += `<button type="button" data-id="${c.id}" aria-pressed="${filterSet.has(c.id)}">` +
+      `<span class="dot" style="background:${c.color}"></span>${escapeHtml(c.name)}</button>`;
+  });
+  container.innerHTML = html;
+
+  container.querySelectorAll("button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.id;
+      if (!id) filterSet.clear();
+      else if (filterSet.has(id)) filterSet.delete(id);
+      else filterSet.add(id);
+      onChange();
+    });
+  });
+}
+
 // ---------- rendering: register ----------
 
 function renderRegister() {
@@ -936,28 +995,60 @@ function renderRegister() {
   });
 
   const box = document.getElementById("register");
+  const currency = state.settings.currency;
   const allEntries = entriesInMonth(viewYear, viewMonth);
-  const entries = allEntries.filter((e) => e.direction === viewDir).slice().sort((a, b) => (a.date < b.date ? 1 : -1));
+  const dirEntries = allEntries
+    .filter((e) => e.direction === viewDir)
+    .slice()
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
 
-  if (entries.length === 0) {
+  renderCatFilter(document.getElementById("registerFilter"), dirEntries, registerCatFilter, () => {
+    renderRegister();
+    renderCategoryRail();
+  });
+
+  const filterActive = registerCatFilter.size > 0;
+  const entries = filterActive
+    ? dirEntries.filter((e) => registerCatFilter.has(e.categoryId))
+    : dirEntries;
+
+  if (dirEntries.length === 0) {
     box.innerHTML = `<div class="register-empty">No ${viewDir === "income" ? "income" : "expenses"} logged yet this month.<br>Use the form above — it takes a few seconds.</div>`;
     return;
   }
+  if (entries.length === 0) {
+    box.innerHTML = `<div class="register-empty">No entries in the selected categories this month.<br><button type="button" class="linkbtn" id="registerFilterClear">Show all categories</button></div>`;
+    document.getElementById("registerFilterClear").addEventListener("click", () => {
+      registerCatFilter.clear();
+      renderRegister();
+      renderCategoryRail();
+    });
+    return;
+  }
 
-  // Week/day IN/OUT headers always sum every entry that month, both
-  // directions, not just whichever side is currently filtered below — same
-  // "totals always show both, unaffected by toggle" rule the Recurring
-  // screen's own summary box already follows.
+  // Unfiltered: week/day headers show IN/OUT summing every entry that month,
+  // BOTH directions, unaffected by the direction toggle (2026-08-26). With a
+  // category filter active they instead collapse to a single figure of the
+  // shown rows, labelled with the existing IN/OUT vocabulary for whichever
+  // side is being viewed (the filter's categories are direction-scoped, so
+  // the other side of a full IN … · OUT … header would only ever be zero).
   const weekAllTotals = new Map(); // mondayIso -> {inc,exp} from ALL entries that week
   const dayAllTotals = new Map(); // date -> {inc,exp} from ALL entries that day
-  allEntries.forEach((e) => {
-    const wk = isoDate(mondayOf(parseIso(e.date)));
-    if (!weekAllTotals.has(wk)) weekAllTotals.set(wk, { inc: 0, exp: 0 });
-    if (!dayAllTotals.has(e.date)) dayAllTotals.set(e.date, { inc: 0, exp: 0 });
-    const wt = weekAllTotals.get(wk), dt = dayAllTotals.get(e.date);
-    if (e.direction === "income") { wt.inc += e.amountMinor; dt.inc += e.amountMinor; }
-    else { wt.exp += e.amountMinor; dt.exp += e.amountMinor; }
-  });
+  if (!filterActive) {
+    allEntries.forEach((e) => {
+      const wk = isoDate(mondayOf(parseIso(e.date)));
+      if (!weekAllTotals.has(wk)) weekAllTotals.set(wk, { inc: 0, exp: 0 });
+      if (!dayAllTotals.has(e.date)) dayAllTotals.set(e.date, { inc: 0, exp: 0 });
+      const wt = weekAllTotals.get(wk), dt = dayAllTotals.get(e.date);
+      if (e.direction === "income") { wt.inc += e.amountMinor; dt.inc += e.amountMinor; }
+      else { wt.exp += e.amountMinor; dt.exp += e.amountMinor; }
+    });
+  }
+
+  const headSpan = (all, selSum) =>
+    filterActive
+      ? `${viewDir === "income" ? "IN" : "OUT"} ${formatMoney(selSum, currency)}`
+      : `IN ${formatMoney(all.inc, currency)} · OUT ${formatMoney(all.exp, currency)}`;
 
   const weeks = new Map(); // mondayIso -> entries[]
   entries.forEach((e) => {
@@ -967,13 +1058,12 @@ function renderRegister() {
   });
   const weekKeys = Array.from(weeks.keys()).sort().reverse();
 
-  const currency = state.settings.currency;
   let html = "";
   weekKeys.forEach((wk) => {
     const rows = weeks.get(wk);
-    const { inc, exp } = weekAllTotals.get(wk);
     const label = weekRangeLabel(rows);
-    html += `<div class="weekhead"><b>${label}</b><span>IN ${formatMoney(inc, currency)} · OUT ${formatMoney(exp, currency)}</span></div>`;
+    const weekSel = rows.reduce((s, e) => s + e.amountMinor, 0);
+    html += `<div class="weekhead"><b>${label}</b><span>${headSpan(weekAllTotals.get(wk), weekSel)}</span></div>`;
 
     const days = new Map(); // date -> entries[], for the daily sub-grouping inside each week
     rows.forEach((e) => {
@@ -982,9 +1072,9 @@ function renderRegister() {
     });
     Array.from(days.keys()).sort().reverse().forEach((dateKey) => {
       const dayRows = days.get(dateKey);
-      const { inc: dInc, exp: dExp } = dayAllTotals.get(dateKey);
+      const daySel = dayRows.reduce((s, e) => s + e.amountMinor, 0);
       const dayLabel = parseIso(dateKey).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }).toUpperCase();
-      html += `<div class="dayhead"><b>${dayLabel}</b><span>IN ${formatMoney(dInc, currency)} · OUT ${formatMoney(dExp, currency)}</span></div>`;
+      html += `<div class="dayhead"><b>${dayLabel}</b><span>${headSpan(dayAllTotals.get(dateKey), daySel)}</span></div>`;
       dayRows.forEach((e) => {
         const cat = catById(e.categoryId);
         const amtClass = e.direction === "income" ? "income" : "";
@@ -1058,7 +1148,10 @@ function renderCategoryRail() {
       ? `${formatMoney(total, currency)} / ${formatMoney(c.budgetMinor, currency)}`
       : formatMoney(total, currency);
     const row = document.createElement("div");
-    row.className = "cat";
+    // .selected is a passive reflection of the register's category filter —
+    // the rail's own totals and bars stay computed from the full unfiltered
+    // month regardless (see renderCatFilter).
+    row.className = "cat" + (registerCatFilter.has(c.id) ? " selected" : "");
     row.dataset.id = c.id;
     row.innerHTML = `
       <button type="button" class="sw" style="background:${c.color}" title="Change color"></button>
@@ -1148,7 +1241,16 @@ function renderCategoryRail() {
 
 function initCategoryRail() {
   document.querySelectorAll("#viewDirToggle button").forEach((b) => {
-    b.addEventListener("click", () => { viewDir = b.dataset.dir; openPickerCatId = null; renderRegister(); renderCategoryRail(); });
+    b.addEventListener("click", () => {
+      viewDir = b.dataset.dir;
+      openPickerCatId = null;
+      // Expense and income categories are disjoint, so a filter carried
+      // across a direction switch could only ever resolve to nothing —
+      // clear it rather than leave a stale selection behind.
+      registerCatFilter.clear();
+      renderRegister();
+      renderCategoryRail();
+    });
   });
   // Swatch clicks and clicks inside an open picker stop propagation (above),
   // so any click that reaches here is genuinely outside the open picker's row.
@@ -1937,9 +2039,29 @@ function renderRecurringView() {
   // The list itself still shows paused/future-dated items (marked inactive
   // below) — only the totals above narrow to what's currently active.
   const list = document.getElementById("recurringList");
-  const items = live.filter((r) => r.direction === recurringDir);
-  if (items.length === 0) {
+  const dirRecs = live.filter((r) => r.direction === recurringDir);
+
+  // Chip row offers every category used by a recurring item in this
+  // direction — paused/not-yet-started ones included, since they're still
+  // shown in the list and so should be filterable (matches the "still real,
+  // just not currently doing anything" language elsewhere).
+  renderCatFilter(document.getElementById("recurringFilter"), dirRecs, recurringCatFilter, renderRecurringView);
+
+  const filterActive = recurringCatFilter.size > 0;
+  const items = filterActive
+    ? dirRecs.filter((r) => recurringCatFilter.has(r.categoryId))
+    : dirRecs;
+
+  if (dirRecs.length === 0) {
     list.innerHTML = `<div class="register-empty">No recurring ${recurringDir === "income" ? "income" : "expenses"} yet.</div>`;
+    return;
+  }
+  if (items.length === 0) {
+    list.innerHTML = `<div class="register-empty">No recurring items in the selected categories.<br><button type="button" class="linkbtn" id="recurringFilterClear">Show all categories</button></div>`;
+    document.getElementById("recurringFilterClear").addEventListener("click", () => {
+      recurringCatFilter.clear();
+      renderRecurringView();
+    });
     return;
   }
   list.innerHTML = "";
@@ -1960,7 +2082,11 @@ function renderRecurringView() {
     const dayTotal = rows.filter((r) => isRecurringActive(r, today)).reduce((s, r) => s + r.amountMinor, 0);
     const head = document.createElement("div");
     head.className = "dayhead";
-    head.innerHTML = `<b>${ordinal(day).toUpperCase()}</b><span>${formatMoney(dayTotal, currency)}</span>`;
+    // IN/OUT prefix when a category filter is active, mirroring the
+    // register's collapsed day/week headers (the filter is direction-scoped,
+    // so one label is always right).
+    const headPrefix = filterActive ? (recurringDir === "income" ? "IN " : "OUT ") : "";
+    head.innerHTML = `<b>${ordinal(day).toUpperCase()}</b><span>${headPrefix}${formatMoney(dayTotal, currency)}</span>`;
     list.appendChild(head);
 
     rows.forEach((r) => {
@@ -2121,7 +2247,7 @@ function initRecurringView() {
   const today = new Date();
   populateMonthSelect(document.getElementById("newRecStartMonth"), monthKey(today.getFullYear(), today.getMonth()));
   document.querySelectorAll("#recurringDirToggle button").forEach((b) => {
-    b.addEventListener("click", () => { recurringDir = b.dataset.dir; renderAll(); });
+    b.addEventListener("click", () => { recurringDir = b.dataset.dir; recurringCatFilter.clear(); renderAll(); });
   });
   document.getElementById("addRecurringForm").addEventListener("submit", (e) => {
     e.preventDefault();
@@ -2166,6 +2292,8 @@ function exposeTestHook() {
       FAKE_DRIVE = {};
       fakeDriveNextId = 1;
       driveAccessToken = null;
+      registerCatFilter.clear();
+      recurringCatFilter.clear();
       renderAll();
     },
     saveState,
@@ -2198,7 +2326,13 @@ function exposeTestHook() {
 
     formatMoney, formatCompact, parseAmountToMinor, monthTotals, sumByCategory,
     getViewDir: () => viewDir,
-    setViewDir: (dir) => { viewDir = dir; renderAll(); },
+    setViewDir: (dir) => { viewDir = dir; registerCatFilter.clear(); renderAll(); },
+
+    // Category filter (view-state only, never persisted or synced).
+    getRegisterCatFilter: () => Array.from(registerCatFilter),
+    setRegisterCatFilter: (ids) => { registerCatFilter.clear(); (ids || []).forEach((id) => registerCatFilter.add(id)); renderAll(); },
+    getRecurringCatFilter: () => Array.from(recurringCatFilter),
+    setRecurringCatFilter: (ids) => { recurringCatFilter.clear(); (ids || []).forEach((id) => recurringCatFilter.add(id)); renderAll(); },
 
     // Deterministic control over "which month is currently displayed" — the
     // real app defaults this to the real today's month at load, which is
