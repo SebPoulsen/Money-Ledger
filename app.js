@@ -49,6 +49,19 @@ const SEED_CATEGORIES = [
   { id: "seed-other-income", name: "Other", direction: "income", hue: 0.42 },
 ];
 
+// Seed categories are stamped with this fixed ancient time, NOT nowIso(),
+// so a fresh re-seed (empty/reset localStorage → defaultState()) can never
+// out-rank a real tombstone or a real edit from another device during a
+// merge. "Now" always beats "months ago" — which is exactly how a pristine
+// re-seed used to silently resurrect a category someone had deleted long
+// ago, then push that resurrection back to Drive. `sameContent` ignores
+// updatedAt, so two genuinely-fresh devices still merge to one copy each
+// (no duplication); only a real content conflict ever consults this, and
+// there a pristine seed *should* lose. Matches the "treat pre-sync data as
+// very old" convention already used in loadState() below. See CLAUDE.md
+// "seed category resurrection".
+const SEED_UPDATED_AT = new Date(0).toISOString();
+
 // ---------- storage ----------
 
 function nowIso() {
@@ -73,7 +86,7 @@ function defaultState() {
     categories: SEED_CATEGORIES.map((c) => ({
       id: c.id, name: c.name, direction: c.direction, hue: c.hue, color: hueColor(c.hue),
       budgetMinor: null,
-      updatedAt: nowIso(), updatedBy: DEVICE_ID, deleted: false, deletedAt: null,
+      updatedAt: SEED_UPDATED_AT, updatedBy: DEVICE_ID, deleted: false, deletedAt: null,
     })),
     entries: [],
     recurring: [],
@@ -85,7 +98,17 @@ function defaultState() {
 // replacing the whole file (CLAUDE.md hard rule 6).
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return defaultState();
+  if (!raw) {
+    // No stored ledger — first install, or the state key was cleared/
+    // evicted while a device id survived. Either way this is effectively a
+    // new device: give it a fresh identity so merge can't later mistake a
+    // pristine re-seed for "my own earlier record" via the remoteIsMine
+    // short-circuit (see the corrupt-data branch below and CLAUDE.md "seed
+    // category resurrection"). On a genuine first install the id generated
+    // moments ago has no meaning yet, so replacing it costs nothing.
+    regenerateDeviceId();
+    return defaultState();
+  }
   try {
     const parsed = JSON.parse(raw);
     // No prior schema versions exist yet — this is where a migration would
@@ -109,6 +132,13 @@ function loadState() {
     return parsed;
   } catch (e) {
     console.error("Money Ledger: corrupt local data, starting fresh", e);
+    // A device whose stored ledger is unreadable has genuinely lost its
+    // history — and with it, any basis for merge to trust "this looks like
+    // my own earlier push" (the remoteIsMine short-circuit in mergeRecords).
+    // Give it a new identity so a fresh re-seed can't be mistaken for a
+    // deliberate un-delete of a category this same DEVICE_ID once tombstoned.
+    // See CLAUDE.md "seed category resurrection".
+    regenerateDeviceId();
     return defaultState();
   }
 }
@@ -141,6 +171,16 @@ function saveState() {
 const DEVICE_ID_KEY = "money-ledger-device-id" + (TEST_MODE ? "-TESTMODE" : "");
 let DEVICE_ID = localStorage.getItem(DEVICE_ID_KEY);
 if (!DEVICE_ID) {
+  DEVICE_ID = uid();
+  localStorage.setItem(DEVICE_ID_KEY, DEVICE_ID);
+}
+
+// Called by loadState() whenever it falls back to defaultState() (missing
+// or corrupt stored ledger). A device with no history has no basis to be
+// recognised by merge as "me" — keeping a stale id there is what let a
+// re-seed's category slip past the remoteIsMine check and undo a real
+// delete. See CLAUDE.md "seed category resurrection".
+function regenerateDeviceId() {
   DEVICE_ID = uid();
   localStorage.setItem(DEVICE_ID_KEY, DEVICE_ID);
 }
@@ -2304,6 +2344,16 @@ function exposeTestHook() {
 
     getDeviceId: () => DEVICE_ID,
     setDeviceId: (id) => { DEVICE_ID = id; },
+
+    // Runs the REAL loadState() against a planted STORAGE_KEY value (null =
+    // key absent). Exercises the corrupt-data / missing-ledger fallbacks
+    // and their DEVICE_ID regeneration exactly as a real page load would.
+    SEED_UPDATED_AT,
+    loadStateFrom: (raw) => {
+      if (raw == null) localStorage.removeItem(STORAGE_KEY);
+      else localStorage.setItem(STORAGE_KEY, raw);
+      return loadState();
+    },
 
     getFakeDrive: () => FAKE_DRIVE,
     resetFakeDrive: () => { FAKE_DRIVE = {}; fakeDriveNextId = 1; },
