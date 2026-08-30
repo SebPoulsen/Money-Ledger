@@ -144,6 +144,54 @@ but nothing reaches the UI. If this changes — e.g. sync becomes
 frequent enough that losing edits silently actually causes confusion —
 reopen it rather than quietly adding the toast back.
 
+**Seed category resurrection — fixed 2026-08-30 (two parts, one
+principle).** A deleted seed category could come back from the dead and
+propagate the resurrection to every device via Drive. Reported by
+Sebastian after opening the app on `localhost` with a wiped
+`localStorage`; diagnosed and reproduced in the self-test harness before
+any fix. Mechanism: a device with no stored ledger re-runs
+`defaultState()`, which recreated all 12 `SEED_CATEGORIES` as **live**
+records. The bug was in what timestamp they got:
+
+- **Part 1 — seeds were stamped `updatedAt: nowIso()`.** "Now" always
+  beats a months-old tombstone, so when the re-seeded device synced
+  against a Drive file where a seed category had been deleted long ago,
+  `mergeRecords`' delete-vs-live rule (`newerSide` → the fresh side wins)
+  picked the live re-seed over the real deletion — then `syncNow` pushed
+  that un-deletion back to Drive. Fix: seed categories are stamped
+  `updatedAt: SEED_UPDATED_AT` (`new Date(0).toISOString()`, matching the
+  "treat pre-sync data as very old" convention already in `loadState`),
+  so a pristine re-seed can never out-rank a real tombstone *or* a real
+  edit. `sameContent` ignores `updatedAt`, so two genuinely-fresh devices
+  still merge to one copy each (no duplication — the existing test 10 /
+  15 / 16 behaviour is unchanged); the epoch only ever matters when
+  content genuinely conflicts, and there a default seed *should* lose.
+
+- **Part 2 — `DEVICE_ID` survived a state wipe, so `remoteIsMine` fired.**
+  When `localStorage` is *corrupt* rather than absent (`loadState`'s
+  `catch`), or the state key alone is cleared, the separate
+  `money-ledger-device-id` key can survive. The re-seed's records then
+  carry this device's own id, `mergeRecords`' `remoteIsMine`
+  short-circuit trusts them outright, and the timestamp check (Part 1's
+  fix) is bypassed entirely. Fix: `loadState()` calls a new
+  `regenerateDeviceId()` on **both** fallback paths (`!raw` and `catch`).
+  Rationale — one coherent principle: *a device that has lost its entire
+  ledger has genuinely lost its identity*, and a fresh `DEVICE_ID` there
+  is exactly what that field exists for (telling "my own stale push"
+  from "another device"). On a normal first install the id generated
+  moments earlier has no meaning yet, so replacing it costs nothing.
+
+Rejected alternatives: (A) Part 1 only — leaves the corrupt-storage path
+open on data already proven risky. (C) an explicit "a pristine seed never
+wins a merge conflict" guard inside `mergeRecords` — adds a special case
+to a deliberately generic core. Both parts have fail-first regression
+tests (16b: cross-device re-seed vs. old tombstone; 16c: corrupt-storage
+re-seed vs. own-id tombstone), each watched to fail against pre-fix code
+and to fail with only one of the two fixes applied. **Not addressed
+here:** whether Sebastian's real Drive file still holds resurrected
+categories from the incident — that's a separate cleanup question,
+pending confirmation of remaining exposure.
+
 ## Budget design decisions
 
 **Income is a plain counter, never measured against anything (2026-08-11).**
@@ -930,7 +978,7 @@ establishing each one's "born" snapshot, before any of them touch Drive
 for real** — mirrors what tests 11–16 already do, just made explicit
 here since it's easy to get this exact ordering wrong by accident.
 
-**What it covers (265 tests as of 2026-08-28, up from 23):**
+**What it covers (276 tests as of 2026-08-30, up from 23):**
 - **Sync/merge** (the original 23): the `mergeRecords` algorithm directly
   (only-local, only-remote, both-edited, delete-vs-edit,
   identical/skewed/ambiguous timestamps, empty sides, seed-category id
@@ -943,7 +991,13 @@ here since it's easy to get this exact ordering wrong by accident.
   end to end, and a regression test for `budgetRingColors` actually
   syncing (2026-08-12) — a colour set on one device reaching another, and
   device-local Settings fields (`driveConnected`/`driveFileId`) staying
-  untouched by that same sync.
+  untouched by that same sync. **Seed category resurrection (2026-08-30,
+  tests 16b/16c):** a fresh re-seed vs. another device's months-old
+  tombstone (must not resurrect, on the device or back on Drive), and the
+  same via corrupt-`localStorage` recovery where `DEVICE_ID` survives —
+  asserts the epoch `updatedAt` on recovered seeds and that
+  `loadState()`'s fallback regenerates `DEVICE_ID`. See "Seed category
+  resurrection" under Sync design decisions.
 - **Money math:** `parseAmountToMinor` (rounding, rejection of
   zero/negative/blank/non-numeric input, no float drift across repeated
   parses), `formatMoney`/`formatCompact` (decimal-hiding on whole amounts,

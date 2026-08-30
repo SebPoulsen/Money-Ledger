@@ -353,6 +353,98 @@ async function runTests(H,d){
       catsB.length===H.SEED_CATEGORIES.length);
   })();
 
+  /* 16b. REGRESSION (2026-08-30): a fresh re-seed must not resurrect a seed
+     category another device deleted long ago. Device A deletes seed-transport
+     (an old tombstone) and pushes to Drive; device B — empty localStorage,
+     so a full re-seed via defaultState() — connects to the same file and
+     syncs. seed-transport must stay deleted, on B and back on Drive. Before
+     the fix, the re-seed's updatedAt (nowIso()) outranked the months-old
+     tombstone, so mergeRecords' delete-vs-live rule picked the live re-seed
+     and syncNow pushed that resurrection back to Drive. Fixed by stamping
+     seed categories with a fixed ancient updatedAt (SEED_UPDATED_AT). */
+  await (async function(){
+    var a=useDevice("reseed-A"); a.save();
+    var b=useDevice("reseed-B"); b.save(); // both born-snapshots before any Drive write (FAKE_DRIVE-wipe gotcha)
+
+    useDevice("reseed-A");
+    // A has been running for a while — age its existing seeds so its
+    // delete-today is decisively newer than them, not a clock-skew tie.
+    var st0=H.getState();
+    st0.categories.forEach(function(c){ c.updatedAt="2024-06-01T00:00:00.000Z"; });
+    H.setState(st0);
+    var fileId=await H.resolveDriveFileId();
+    H.testConnectDrive(fileId);
+    H.deleteCategory("seed-transport");
+    // The deletion itself happened months ago too (not "just now").
+    var st1=H.getState();
+    st1.categories.forEach(function(c){
+      if(c.id==="seed-transport"){ c.updatedAt="2025-01-15T09:00:00.000Z"; c.deletedAt="2025-01-15T09:00:00.000Z"; }
+    });
+    H.setState(st1);
+    await H.syncNow(false);
+    a.save();
+    assert("16b setup: seed-transport is a months-old tombstone on Drive",
+      JSON.parse(H.getFakeDrive()[fileId].content).categories.find(function(c){return c.id==="seed-transport";}).deleted===true);
+
+    useDevice("reseed-B"); // restores B's born snapshot: a fresh defaultState() seed set
+    var fidB=await H.resolveDriveFileId();
+    H.testConnectDrive(fidB);
+    await H.syncNow(false);
+
+    var bCat=H.getState().categories.find(function(c){return c.id==="seed-transport";});
+    assert("a fresh re-seed does NOT resurrect a seed category deleted on another device",
+      !!bCat && bCat.deleted===true);
+    assert("device B ends up one live seed category short, not the full set",
+      H.getState().categories.filter(function(c){return !c.deleted;}).length===H.SEED_CATEGORIES.length-1);
+    assert("the deletion is NOT undone on Drive by B's sync",
+      JSON.parse(H.getFakeDrive()[fidB].content).categories.find(function(c){return c.id==="seed-transport";}).deleted===true);
+  })();
+
+  /* 16c. REGRESSION (2026-08-30): the same resurrection via the OTHER path —
+     corrupt (not merely missing) localStorage. loadState()'s catch falls
+     back to defaultState() while the device-id key survives, so the re-seed
+     carries THIS device's own id and mergeRecords' remoteIsMine short-circuit
+     trusts it outright, never consulting the timestamp — the SEED_UPDATED_AT
+     fix alone can't stop this. Fixed by regenerating DEVICE_ID whenever
+     loadState() falls back: a device that lost its whole ledger is a new
+     device. Also asserts the epoch-stamp on the recovered seeds. */
+  await (async function(){
+    useDevice("corrupt-B"); // fresh seed; device id -> "corrupt-B"
+    var st0=H.getState();
+    st0.categories.forEach(function(c){ c.updatedAt="2024-07-01T00:00:00.000Z"; });
+    H.setState(st0);
+    var fileId=await H.resolveDriveFileId();
+    H.testConnectDrive(fileId);
+    H.deleteCategory("seed-transport"); // deleted BY this device -> updatedBy "corrupt-B"
+    var st1=H.getState();
+    st1.categories.forEach(function(c){
+      if(c.id==="seed-transport"){ c.updatedAt="2025-02-01T09:00:00.000Z"; c.deletedAt="2025-02-01T09:00:00.000Z"; }
+    });
+    H.setState(st1);
+    await H.syncNow(false); // months-old tombstone, authored by "corrupt-B", now on Drive
+    assert("16c setup: seed-transport is a months-old tombstone on Drive, authored by this device id",
+      (function(){var c=JSON.parse(H.getFakeDrive()[fileId].content).categories.find(function(x){return x.id==="seed-transport";});return c.deleted===true && c.updatedBy==="corrupt-B";})());
+
+    // This device's stored ledger corrupts. loadState() hits its catch.
+    H.setDeviceId("corrupt-B");
+    var recovered=H.loadStateFrom("{ not valid json ]");
+    assert("corrupt-data fallback regenerates the device id (no history => new device)",
+      H.getDeviceId()!=="corrupt-B");
+    assert("recovered state is a fresh full re-seed with the fixed ancient updatedAt",
+      recovered.categories.length===H.SEED_CATEGORIES.length &&
+      recovered.categories.every(function(c){return !c.deleted && c.updatedAt===H.SEED_UPDATED_AT;}));
+
+    H.setState(recovered);
+    var fid2=await H.resolveDriveFileId();
+    H.testConnectDrive(fid2);
+    await H.syncNow(false);
+    var bCat=H.getState().categories.find(function(c){return c.id==="seed-transport";});
+    assert("corrupt-data recovery + sync does NOT resurrect the deleted seed category",
+      !!bCat && bCat.deleted===true);
+    assert("the deletion stays intact on Drive after the recovered device syncs",
+      JSON.parse(H.getFakeDrive()[fid2].content).categories.find(function(c){return c.id==="seed-transport";}).deleted===true);
+  })();
+
   /* ============ money math (2026-08-11 backfill) ============
      Everything above is sync/merge — not one of the original 23 checked
      an amount, a total, a currency string, or a date boundary. Added after
