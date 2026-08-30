@@ -577,10 +577,14 @@ set. What landed:
   zero-match empty state.
 - **Day/week headers collapse when a filter is active.** Unfiltered, they
   keep the existing `IN … · OUT …` both-direction totals (the 2026-08-26
-  decision stands). Filtered, they show a single `Selected <sum>` of the
-  visible rows — a direction-scoped category filter would otherwise force
-  `IN` or `OUT` to a confusing hard zero. Recurring's day-group total
-  gets the same `Selected ` prefix.
+  decision stands). Filtered, they show a single figure of the visible
+  rows, labelled with the existing IN/OUT vocabulary for whichever side is
+  being viewed — `OUT <sum>` in Expense view, `IN <sum>` in Income view
+  (2026-08-30; first shipped as a generic `Selected <sum>` prefix, changed
+  because the filter's categories are already direction-scoped, so this is
+  just the same concept the header already had a word for — the other side
+  of a full `IN … · OUT …` would only ever be zero). Recurring's day-group
+  total gets the same IN/OUT prefix.
 - **Summary panel and the category rail's own totals stay unfiltered** —
   same rule as the monthly category table being unaffected. The rail
   *does* lightly mark selected categories (`.cat.selected`, an inset ink
@@ -979,8 +983,8 @@ here since it's easy to get this exact ordering wrong by accident.
   toggle now drives both — see "General fixes (2026-08-26)".
   **The category filter (2026-08-28):** direction + selected categories
   compose (AND), multi-select, chip eligibility (this-month/this-direction
-  only), day/week headers collapsing to `Selected <sum>` when filtered
-  while the unfiltered `IN … · OUT …` baseline is untouched, the direction
+  only), day/week headers collapsing to `OUT <sum>` / `IN <sum>` when
+  filtered while the unfiltered `IN … · OUT …` baseline is untouched, the direction
   toggle clearing the filter, the zero-match empty state, the rail's
   passive `.selected` highlight with rail totals staying unfiltered,
   month-nav re-deriving chip eligibility without touching the filter set,

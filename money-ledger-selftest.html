@@ -1887,9 +1887,10 @@ async function runTests(H,d){
       H.getRegisterCatFilter().length===0 && d.querySelectorAll("#register .entryrow").length===2);
   })();
 
-  /* 82. register: day/week headers collapse to a single "Selected <sum>"
-     when a filter is active (matching the visible rows), and read the
-     unchanged "IN … · OUT …" both-direction totals when not. */
+  /* 82. register: day/week headers collapse to a single figure labelled
+     OUT (Expense view) / IN (Income view) when a filter is active — the
+     existing IN/OUT vocabulary, not a new word — and read the unchanged
+     "IN … · OUT …" both-direction totals when not. */
   (function(){
     H.resetState(); H.setView(2026,7);
     var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
@@ -1905,14 +1906,19 @@ async function runTests(H,d){
     assert("unfiltered week header likewise reads IN … · OUT …", noFilterWeek.indexOf("IN")===0);
     H.setRegisterCatFilter(["seed-groceries"]);
     var filteredDay=d.querySelector("#register .dayhead span").textContent;
-    assert("filtered day header collapses to Selected <sum of shown rows>",
-      filteredDay.indexOf("Selected")===0 && digits(filteredDay)==="50");
+    assert("filtered day header (Expense view) collapses to OUT <sum of shown rows>",
+      filteredDay.indexOf("OUT")===0 && filteredDay.indexOf("·")===-1 && digits(filteredDay)==="50");
     var filteredWeek=d.querySelector("#register .weekhead span").textContent;
-    assert("filtered week header collapses to Selected <sum of shown rows>",
-      filteredWeek.indexOf("Selected")===0 && digits(filteredWeek)==="50");
+    assert("filtered week header (Expense view) collapses to OUT <sum of shown rows>",
+      filteredWeek.indexOf("OUT")===0 && filteredWeek.indexOf("·")===-1 && digits(filteredWeek)==="50");
     H.setRegisterCatFilter([]);
     assert("clearing the filter restores the IN/OUT header",
       d.querySelector("#register .dayhead span").textContent.indexOf("IN")===0);
+    H.setViewDir("income"); // clears the filter
+    H.setRegisterCatFilter(["seed-salary"]);
+    var incDay=d.querySelector("#register .dayhead span").textContent;
+    assert("filtered day header (Income view) collapses to IN <sum>, no · separator",
+      incDay.indexOf("IN")===0 && incDay.indexOf("·")===-1 && digits(incDay)==="1000");
   })();
 
   /* 83. register: switching the Spent/Income toggle clears the active
@@ -1986,8 +1992,9 @@ async function runTests(H,d){
   })();
 
   /* 87. Recurring: selecting a category narrows the list and the day-group
-     total (with the same "Selected" prefix), while the summary box stays
-     unaffected — same rule as the register's monthly category table. */
+     total (labelled OUT / IN like the register's collapsed headers), while
+     the summary box stays unaffected — same rule as the register's monthly
+     category table. */
   (function(){
     H.resetState(); H.setView(2026,7);
     var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
@@ -1999,11 +2006,17 @@ async function runTests(H,d){
     assert("Recurring list narrows to the selected category",
       rows.length===1 && rows[0].querySelector(".cat").textContent==="Subscriptions");
     var dayHead=d.querySelector("#recurringList .dayhead span").textContent;
-    assert("Recurring day-group total follows the filter, prefixed Selected",
-      dayHead.indexOf("Selected")===0 && digits(dayHead)==="89");
+    assert("Recurring day-group total follows the filter, prefixed OUT in Expense view",
+      dayHead.indexOf("OUT")===0 && digits(dayHead)==="89");
     var expFig=d.querySelector("#recurringSummaryBox .summary-row:nth-child(2) b").textContent;
     assert("Recurring summary box is unaffected by the filter (still sums both items)",
       digits(expFig)==="388");
+    H.setRecurringDir("income"); // clears the filter
+    H.createRecurring({name:"Salary",amountMinor:2800000,direction:"income",categoryId:"seed-salary",dayOfMonth:25,startMonth:"2020-01"});
+    H.setRecurringCatFilter(["seed-salary"]);
+    var incHead=d.querySelector("#recurringList .dayhead span").textContent;
+    assert("Recurring day-group total (Income view) is prefixed IN",
+      incHead.indexOf("IN")===0 && digits(incHead)==="28000");
   })();
 
   /* 88. Recurring: a category used only by a paused / not-yet-started item

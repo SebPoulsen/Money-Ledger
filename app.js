@@ -1028,9 +1028,10 @@ function renderRegister() {
 
   // Unfiltered: week/day headers show IN/OUT summing every entry that month,
   // BOTH directions, unaffected by the direction toggle (2026-08-26). With a
-  // category filter active they instead collapse to a single "Selected <sum>"
-  // of the shown rows — a direction-scoped category filter would otherwise
-  // force IN or OUT to a confusing hard zero on one side.
+  // category filter active they instead collapse to a single figure of the
+  // shown rows, labelled with the existing IN/OUT vocabulary for whichever
+  // side is being viewed (the filter's categories are direction-scoped, so
+  // the other side of a full IN … · OUT … header would only ever be zero).
   const weekAllTotals = new Map(); // mondayIso -> {inc,exp} from ALL entries that week
   const dayAllTotals = new Map(); // date -> {inc,exp} from ALL entries that day
   if (!filterActive) {
@@ -1046,7 +1047,7 @@ function renderRegister() {
 
   const headSpan = (all, selSum) =>
     filterActive
-      ? `Selected ${formatMoney(selSum, currency)}`
+      ? `${viewDir === "income" ? "IN" : "OUT"} ${formatMoney(selSum, currency)}`
       : `IN ${formatMoney(all.inc, currency)} · OUT ${formatMoney(all.exp, currency)}`;
 
   const weeks = new Map(); // mondayIso -> entries[]
@@ -2081,9 +2082,11 @@ function renderRecurringView() {
     const dayTotal = rows.filter((r) => isRecurringActive(r, today)).reduce((s, r) => s + r.amountMinor, 0);
     const head = document.createElement("div");
     head.className = "dayhead";
-    // "Selected" prefix when a category filter is active, mirroring the
-    // register's collapsed day/week headers.
-    head.innerHTML = `<b>${ordinal(day).toUpperCase()}</b><span>${filterActive ? "Selected " : ""}${formatMoney(dayTotal, currency)}</span>`;
+    // IN/OUT prefix when a category filter is active, mirroring the
+    // register's collapsed day/week headers (the filter is direction-scoped,
+    // so one label is always right).
+    const headPrefix = filterActive ? (recurringDir === "income" ? "IN " : "OUT ") : "";
+    head.innerHTML = `<b>${ordinal(day).toUpperCase()}</b><span>${headPrefix}${formatMoney(dayTotal, currency)}</span>`;
     list.appendChild(head);
 
     rows.forEach((r) => {
