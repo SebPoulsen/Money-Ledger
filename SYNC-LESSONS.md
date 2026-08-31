@@ -374,7 +374,10 @@ called out explicitly.
    (without one GIS's closed-popup detection never arms and failures are
    silent) + a 120s watchdog toast. Do all of this on Hours Ledger too;
    wire `error_callback` and the `window.open` wrapper in from the first
-   connect commit.
+   connect commit. **Confirmed fixed on the real device, live site
+   (2026-08-31):** five disconnect→reconnect cycles in a row, picker
+   opened + completed + returned to "Synced to Drive" every time, no
+   stale-tab retargeting, no dead tabs piling up.
 
 ### What to do differently, starting from scratch on Hours Ledger
 

@@ -934,16 +934,24 @@ state rendering the Reconnect affordance; watched to fail against pre-fix
 code; suite 282/0). The "never a page-load popup" and "frozen window name"
 claims are backed by the two headless `gsi/client` probes above plus the
 minified-source reading, not by the self-test (TEST_MODE never loads GIS).
-**Not yet real-device-confirmed by Sebastian** — built on branch
-`fix-oauth-wrong-window`, pending: (a) opening the app >1hr after last sync
-and confirming no unprompted picker + the Reconnect button showing; (b)
-tapping Reconnect and confirming it completes; (c) backing out of the
-picker and confirming a toast now appears instead of silence; (d) the
-stale-tab diagnostic (close any dormant `accounts.google.com` tab, then
-reconnect). The frozen-window-name reuse is *expected to still occur* for
-the deliberate-tap path after this fix — the change makes it visible and
-recoverable, and removes the unprompted/hourly recurrence, not the
-GIS-internal behaviour itself.
+**Device status:** first attempt "failed" because the branch was never
+deployed — the phone was still running `main`; traced and confirmed via
+the live `app.js` (see the merge-and-deploy discipline note below). After
+merging to `main` (`544d987`) and deploying: (b) reconnect completes and
+(c) back-out surfaces a toast were **confirmed on the real device
+(2026-08-31)** as part of the 2026-08-31 disconnect→reconnect run; (a) no
+unprompted picker on an idle-tab/page-load is verified by the live
+headless probe (0 `requestAccessToken` calls on `DOMContentLoaded` with
+connected + no cached token), not a separate on-device run. The
+frozen-window-name reuse this fix *left in place* for the deliberate-tap
+path was then fixed outright — see "General fixes (2026-08-31)".
+
+**Merge-and-deploy discipline (learned here the hard way):** a "checkpoint,
+not merge" branch commit does **nothing** for on-device testing — GitHub
+Pages serves `main`. Before asking for a real-device check, the fix must
+be on `main` and deployed; verify with
+`curl https://sebpoulsen.github.io/Money-Ledger/app.js | grep <new-symbol>`,
+not by assuming.
 
 **Update (2026-08-31): the deliberate-tap wrong-window bug turned out to
 be fixable from the app after all — see "General fixes (2026-08-31)"
@@ -1014,9 +1022,16 @@ to). The "close the dangling Google tab" mitigation was the wrong model:
   fresh window", and "opener can close a cross-origin popup" facts are
   from a headed-Chrome test (Blink; WebKit/Chrome-iOS not directly
   tested — but the user already demonstrated the retarget there, and
-  "fresh name → fresh window" is engine-independent). **Not yet
-  real-device-confirmed by Sebastian** — branch `fix-oauth-window-reuse`,
-  pending a disconnect→reconnect check on the deployed site.
+  "fresh name → fresh window" is engine-independent).
+  **Confirmed on the real device, live site (2026-08-31):** merged
+  (`b7ab1cc`) and deployed; Sebastian ran the disconnect→reconnect repro
+  five times in a row — every time the picker opened correctly, completed,
+  and returned to "Synced to Drive", with no stale-tab retargeting and no
+  dead tabs accumulating. This also stands as a real-device confirmation
+  of the `544d987` fix's auth-flow half (checks (b) and (c) from "General
+  fixes (2026-08-30)" — reconnect completes cleanly, back-out is
+  recoverable); the idle-tab/page-load half (check (a)) remains verified
+  by the live headless probe rather than a separate on-device run.
 
 ## Testing before you claim it works
 
