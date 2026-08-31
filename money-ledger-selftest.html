@@ -2355,6 +2355,113 @@ async function runTests(H,d){
       e4.closed===true && H.getLastOAuthWindow()===null);
   })();
 
+  /* 97. (2026-09-01) "Tap anywhere to reconnect": when a Drive-connected
+     device's ~1hr token has expired, the next real tap anywhere resolves
+     the reconnect — the buried settings-panel label is easy to miss.
+     resolveGestureReconnect is the extracted gating decision so this can be
+     asserted for every state without loading Google Identity Services. It
+     must green-light ONLY when connected + token gone, once per episode,
+     never while a flow is pending, never on the connect button itself — and
+     it must never itself reach an OAuth call (the caller fires
+     reconnectDrive(), which is the sole gesture-backed path, inheriting the
+     fresh-window-name wrapper from "General fixes 2026-08-31"). */
+  await (async function(){
+    if (typeof H.resolveGestureReconnect !== "function" ||
+        typeof H.getDriveReconnectAttempted !== "function" ||
+        typeof H.setDriveReconnectAttempted !== "function" ||
+        typeof H.armDriveAuthWatchdog !== "function" ||
+        typeof H.clearDriveAuthWatchdog !== "function") {
+      assert("resolveGestureReconnect + its test knobs are exposed (fail-first guard)", false);
+      return;
+    }
+    var w=d.defaultView, R=H.resolveGestureReconnect;
+    var savedGoogle=w.google;
+
+    // --- GIS not loaded: never acts, whatever the state
+    w.google=undefined;
+    H.resetState();
+    var s0=H.getState(); s0.settings.currency="DKK"; s0.settings.driveConnected=true; H.setState(s0);
+    H.clearDriveTokenCache();
+    assert("resolveGestureReconnect: GIS not loaded -> 'skip-not-configured' even when a reconnect is otherwise due",
+      R(null)==="skip-not-configured" && H.getDriveReconnectAttempted()===false);
+
+    w.google={ accounts:{ oauth2:{} } }; // present for the rest
+
+    // --- not needed: local-only device
+    H.resetState();
+    var s1=H.getState(); s1.settings.currency="DKK"; H.setState(s1);
+    assert("resolveGestureReconnect: local-only device -> 'skip-not-needed'",
+      R(null)==="skip-not-needed");
+
+    // --- not needed: connected WITH a live token (normal valid-token use — zero side effects)
+    H.resetState();
+    var s2=H.getState(); s2.settings.currency="DKK"; H.setState(s2);
+    H.testConnectDrive("fake-file");
+    assert("resolveGestureReconnect: connected with a live token -> 'skip-not-needed', flag untouched",
+      R(null)==="skip-not-needed" && H.getDriveReconnectAttempted()===false);
+
+    // --- connected, token gone: the green light, claiming the episode's one attempt
+    H.resetState();
+    var s3=H.getState(); s3.settings.currency="DKK"; s3.settings.driveConnected=true; H.setState(s3);
+    H.clearDriveTokenCache();
+    assert("resolveGestureReconnect: connected + token gone -> 'reconnecting'",
+      R(null)==="reconnecting");
+    assert("resolveGestureReconnect: 'reconnecting' claims the episode's one attempt",
+      H.getDriveReconnectAttempted()===true);
+
+    // --- one-shot: the very next tap no-ops until the attempt settles
+    assert("resolveGestureReconnect: a second tap the same episode -> 'skip-already-attempted'",
+      R(null)==="skip-already-attempted");
+
+    // --- a dismissed attempt leaves the flag set (no reprompt on the next tap)
+    H.driveAuthErrorCallback({type:"popup_closed"});
+    assert("resolveGestureReconnect: flag survives a dismissed attempt -> still 'skip-already-attempted'",
+      H.getDriveReconnectAttempted()===true && R(null)==="skip-already-attempted");
+
+    // --- a genuine token success re-arms it, so a LATER separate expiry can retry
+    H.setDriveReconnectAttempted(true);
+    await H.handleDriveAuthResult({ access_token:"tok-"+H.getDeviceId(), expires_in:3600 }, false);
+    assert("resolveGestureReconnect: a real token success resets the flag (a later expiry can retry on a tap)",
+      H.getDriveReconnectAttempted()===false);
+
+    // --- in-flight guard: a pending auth flow blocks a fresh trigger, flag untouched
+    H.resetState();
+    var s4=H.getState(); s4.settings.currency="DKK"; s4.settings.driveConnected=true; H.setState(s4);
+    H.clearDriveTokenCache();
+    H.armDriveAuthWatchdog();
+    assert("resolveGestureReconnect: an auth flow already pending -> 'skip-in-flight', flag untouched",
+      R(null)==="skip-in-flight" && H.getDriveReconnectAttempted()===false);
+    H.clearDriveAuthWatchdog();
+
+    // --- a tap on the connect button (or a child) defers to its own click handler
+    H.resetState();
+    var s5=H.getState(); s5.settings.currency="DKK"; s5.settings.driveConnected=true; H.setState(s5);
+    H.clearDriveTokenCache();
+    var btn=d.getElementById("driveConnectBtn");
+    assert("resolveGestureReconnect: a tap on #driveConnectBtn -> 'skip-on-connect-button', flag untouched",
+      R(btn)==="skip-on-connect-button" && H.getDriveReconnectAttempted()===false);
+    var inner=d.createElement("span"); btn.appendChild(inner); // future-proof: button gains inner markup
+    assert("resolveGestureReconnect: a tap on a descendant element of #driveConnectBtn also defers",
+      R(inner)==="skip-on-connect-button");
+    btn.removeChild(inner);
+
+    // --- structural invariant: the decision function never itself reaches an
+    //     OAuth call, and app.js invokes requestAccessToken at exactly the
+    //     two gesture-backed call sites (connectDrive + reconnectDrive) — a
+    //     third would mean a new, possibly gesture-less, path.
+    assert("resolveGestureReconnect's own body never calls requestAccessToken or reconnectDrive (caller owns the effect)",
+      R.toString().indexOf("requestAccessToken")===-1 && R.toString().indexOf("reconnectDrive")===-1);
+    var src=await w.fetch("app.js").then(function(r){ return r.text(); });
+    assert("app.js: client.requestAccessToken( is invoked at exactly 2 call sites — no gesture-less path snuck in",
+      (src.match(/client\.requestAccessToken\(/g)||[]).length===2);
+
+    // restore
+    w.google=savedGoogle;
+    H.clearDriveAuthWatchdog();
+    H.setDriveReconnectAttempted(false);
+    H.resetState();
+  })();
+
   return results;
 }
 })();

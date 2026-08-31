@@ -189,6 +189,16 @@ let state = loadState();
 let driveAccessToken = null;
 let driveTokenClient = null;
 
+// "Tap anywhere to reconnect": one attempt per token-expired episode. A
+// capture-phase pointerdown on document (see resolveGestureReconnect) lets
+// the next real tap anywhere resolve a needed Drive reconnect, without
+// swallowing that tap. In-memory only — never persisted, never synced,
+// cleared on reload. Stays true through a dismissed/failed/timed-out
+// attempt so one dismissal doesn't reprompt on the very next tap; reset to
+// false only when a token is actually obtained, so a LATER, separate expiry
+// in the same session still resolves itself on a tap.
+let driveReconnectAttempted = false;
+
 // Caches the access token across page reloads, with its own expiry, so a
 // reload within the same ~hour doesn't force a fresh Google sign-in.
 // Google only issues refresh tokens (the usual "stay logged in" mechanism)
@@ -1344,6 +1354,19 @@ function initSettings() {
 
   document.getElementById("driveConnectBtn").addEventListener("click", handleDriveButtonClick);
 
+  // "Tap anywhere to reconnect" — see resolveGestureReconnect. pointerdown,
+  // not click: it fires earliest and always carries user-gesture weight for
+  // the popup (a click can be suppressed by a preventDefault elsewhere).
+  // Capture phase so it runs regardless of what other handlers do. No
+  // preventDefault here — the tap still does its normal job. Not wired in
+  // TEST_MODE: the suite drives resolveGestureReconnect directly, and a
+  // stray real pointerdown must never reach reconnectDrive()'s real OAuth.
+  if (!TEST_MODE) {
+    document.addEventListener("pointerdown", (ev) => {
+      if (resolveGestureReconnect(ev.target) === "reconnecting") reconnectDrive();
+    }, true);
+  }
+
   document.getElementById("exportBtn").addEventListener("click", () => {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -1840,6 +1863,7 @@ function handleDriveAuthResult(resp, isFirstConnect) {
     return;
   }
   driveAccessToken = resp.access_token;
+  driveReconnectAttempted = false; // token obtained — re-arm for any future expiry this session
   saveDriveTokenCache(resp.access_token, resp.expires_in);
   return (async () => {
     try {
@@ -1900,6 +1924,42 @@ function handleDriveButtonClick() {
   }
 }
 
+// "Tap anywhere to reconnect." When a Drive-connected device's ~1hr token
+// has expired, the only signal is the "needs reconnect" label buried in the
+// settings panel — easy to miss, and sync silently stays stopped until the
+// user finds the button. A capture-phase pointerdown on document (wired in
+// initSettings) lets the NEXT real tap anywhere resolve it. The tap is not
+// consumed — no preventDefault — it still does its normal job; the reconnect
+// rides along.
+//
+// This is a genuine user gesture, the same class the dedicated button uses
+// — NOT the un-activated page-load popup that "General fixes (2026-08-30/31)"
+// removed. requestAccessToken is still only ever reached from a click/
+// pointerdown handler: here strictly via reconnectDrive(), which also means
+// this path inherits the fresh-window-name wrapper (openOAuthAwareWindow),
+// the watchdog, and every settle path with no new code.
+//
+// Extracted as its own decision so the self-test can assert the gating for
+// every state without loading Google Identity Services. Returns an outcome
+// string; only "reconnecting" has an effect — it claims this episode's one
+// attempt (driveReconnectAttempted) so subsequent taps no-op until the
+// attempt settles. The caller fires reconnectDrive() on that outcome.
+//   "skip-not-configured"    GIS not ready / no client id
+//   "skip-on-connect-button" tap was on #driveConnectBtn — its own handler owns it
+//   "skip-not-needed"        not (connected && token gone) — the normal case
+//   "skip-already-attempted" one attempt already made this episode
+//   "skip-in-flight"         an interactive auth flow is currently pending
+//   "reconnecting"           all clear — flag claimed; caller runs reconnectDrive()
+function resolveGestureReconnect(target) {
+  if (!driveIsConfigured()) return "skip-not-configured";
+  if (target && target.closest && target.closest("#driveConnectBtn")) return "skip-on-connect-button";
+  if (!(state.settings.driveConnected && !driveAccessToken)) return "skip-not-needed";
+  if (driveReconnectAttempted) return "skip-already-attempted";
+  if (driveAuthWatchdog !== null) return "skip-in-flight";
+  driveReconnectAttempted = true;
+  return "reconnecting";
+}
+
 // What resuming Drive sync on page load should do, given only this device's
 // connection state and whether a still-valid cached access token exists.
 // Its own function purely so the self-test can assert the decision without
@@ -1953,6 +2013,7 @@ function resumeDriveSyncIfTokenCached(onSettled) {
   // plan === "resume-from-cache": still-valid token from an earlier page
   // load this hour — use it directly, no Google round-trip, no popup.
   driveAccessToken = loadDriveTokenCache().token;
+  driveReconnectAttempted = false; // usable token this load — re-arm for a later expiry
   resolveDriveFileId()
     .then(() => syncNow(false))
     .catch((err) => console.error(err))
@@ -2478,6 +2539,8 @@ function exposeTestHook() {
       FAKE_DRIVE = {};
       fakeDriveNextId = 1;
       driveAccessToken = null;
+      driveReconnectAttempted = false;
+      clearDriveAuthWatchdog();
       lastOAuthWindow = null;
       registerCatFilter.clear();
       recurringCatFilter.clear();
@@ -2518,6 +2581,14 @@ function exposeTestHook() {
     getLastOAuthWindow: () => lastOAuthWindow,
     setLastOAuthWindow: (w) => { lastOAuthWindow = w; },
     setNativeWindowOpen: (fn) => { nativeWindowOpen = fn; },
+
+    // "Tap anywhere to reconnect" gating decision + the two knobs a test
+    // needs to stand in for real GIS state: the one-shot flag and the
+    // in-flight watchdog. resolveGestureReconnect never reaches real OAuth.
+    resolveGestureReconnect,
+    getDriveReconnectAttempted: () => driveReconnectAttempted,
+    setDriveReconnectAttempted: (v) => { driveReconnectAttempted = v; },
+    armDriveAuthWatchdog, clearDriveAuthWatchdog,
 
     syncNow, resolveDriveFileId, mergeRecords, sameContent, newerSide,
     ENTRY_CONTENT_FIELDS, CATEGORY_CONTENT_FIELDS, AMBIGUOUS_WINDOW_MS, DRIVE_FILE_NAME,
