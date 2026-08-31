@@ -1033,6 +1033,91 @@ to). The "close the dangling Google tab" mitigation was the wrong model:
   recoverable); the idle-tab/page-load half (check (a)) remains verified
   by the live headless probe rather than a separate on-device run.
 
+## General fixes (2026-09-01)
+
+**"Tap anywhere to reconnect" an expired Drive token.** Follow-up to the
+"General fixes (2026-08-30)" page-load-popup removal. That fix was correct
+— page load now never fires an OAuth popup, it lands in the "needs
+reconnect" state and waits for a tap — but the *only* signal of that state
+is the sync-status label buried in the settings panel (Money Ledger has no
+persistent status line, unlike Hours Ledger). So a device whose ~1hr token
+lapsed would sit there silently not syncing until the user happened to
+scroll down and find the button. Ported Hours Ledger's forgiving pattern
+(its `pointerdown`-delegated reconnect, CLAUDE.md there under "Interactive
+OAuth without a click"): the *next ordinary tap anywhere* resolves it.
+
+- **`resolveGestureReconnect(target)` (`app.js`, after
+  `handleDriveButtonClick`)** — the extracted gating decision, its own
+  function purely so the self-test can assert every branch without loading
+  GIS (same rationale as `pageLoadSyncPlan`). Returns one of six outcome
+  strings; only `"reconnecting"` has an effect. Checks, in order:
+  `driveIsConfigured()` → tap not on `#driveConnectBtn` (its own click
+  handler owns that) → `state.settings.driveConnected && !driveAccessToken`
+  (Money Ledger has no `driveNeedsReconnect` flag — this *is* the
+  needs-reconnect condition, the same one `renderSettings` and
+  `handleDriveButtonClick` already branch on) → `!driveReconnectAttempted`
+  → `driveAuthWatchdog === null` (no auth flow already pending). All clear
+  → claims the episode's one attempt and returns `"reconnecting"`.
+- **The listener (`initSettings`)** — a capture-phase `pointerdown` on
+  `document`, `if (resolveGestureReconnect(ev.target) === "reconnecting")
+  reconnectDrive();`. `pointerdown` not `click` (fires earliest, always
+  carries user-gesture weight, can't be suppressed by a `preventDefault`
+  elsewhere); capture phase; **no `preventDefault`** — the triggering tap
+  still does its normal job, the reconnect just rides along (Sebastian's
+  explicit call: "ride along", not "swallow the first tap"). **Not wired in
+  `TEST_MODE`** — the suite drives `resolveGestureReconnect` directly, and
+  a stray real `pointerdown` must never reach `reconnectDrive()`'s real
+  OAuth.
+- **`driveReconnectAttempted`** — module-level `let`, in-memory only, never
+  persisted, never synced, cleared on reload (same discipline as the
+  category filter's `Set`s and `viewDir`). Set `true` on the
+  `"reconnecting"` outcome; **stays** `true` through a dismissed / failed /
+  timed-out attempt (so one dismissal doesn't re-prompt on the very next
+  tap — the button and a reload are the way back); reset to `false` only
+  when a token is actually obtained (`handleDriveAuthResult` success and
+  the `resume-from-cache` branch), so a *later, separate* expiry the same
+  session still resolves itself on a tap.
+- **No new OAuth path.** The trigger routes strictly through the existing
+  `reconnectDrive()`, so it inherits the fresh-OAuth-window-name wrapper
+  (`openOAuthAwareWindow`, "General fixes 2026-08-31"), the watchdog, and
+  every settle path with zero new code. `client.requestAccessToken(` still
+  has exactly two call sites (`connectDrive` + `reconnectDrive`) — there's
+  a self-test asserting that count, so a future gesture-less caller can't
+  sneak in. The page-load path is untouched: still `pageLoadSyncPlan()` →
+  `"await-user-reconnect"` → `renderSettings()`, no popup.
+- **No schema / storage / sync / migration change** — view-state only.
+- **Known boundary, deliberately out of scope:** this resolves the
+  *page-load* needs-reconnect state. If the cached token expires while the
+  app stays open, `driveAccessToken` still holds the stale string, so
+  `syncNow` fails quietly and `resolveGestureReconnect` returns
+  `"skip-not-needed"` — the user still has to reload to enter the
+  reconnect state. Pre-existing behaviour (nothing nulls the token on a
+  401), not a regression. Fixable later by having a sync failure clear
+  `driveAccessToken`; that's a separate change.
+
+**Verification:** 13 new self-test cases (block 97 — every gating outcome,
+one-shot-per-episode, flag surviving a dismissed attempt, real-token
+success re-arming, the in-flight guard, connect-button + descendant
+deferral, and the `client.requestAccessToken(` call-site-count guard).
+Watched to fail against pre-change code two ways: new tests on the old
+`app.js` trip the exposed-function guard (`1 failing`, same pattern as
+tests 94–96), and deleting just the `driveReconnectAttempted` guard line
+from the shipped code fails the two one-shot assertions. Suite 314/0.
+**Confirmed on the real device, live site (2026-09-01):** merged
+(`b01e300`) and deployed (verified with `curl … | grep
+resolveGestureReconnect` before the device check). Sebastian opened the
+app with an already-expired token — no unprompted popup on load, Sync
+panel correctly showed needs-reconnect; the first ordinary interaction (a
+scroll) triggered the picker, which completed cleanly and returned to
+"Synced to Drive". Also confirmed the negative case: after a manual
+disconnect + reload (`driveConnected` false, not merely token-expired), a
+tap does nothing — correct, `resolveGestureReconnect` returns
+`"skip-not-needed"`. The dismiss-once path (checklist step 3 — close the
+picker without choosing an account, confirm the next tap doesn't
+re-prompt) was **not** force-tested; it'll be exercised naturally on a
+future real expiry. Its logic is covered by the self-test (`flag survives
+a dismissed attempt` → still `"skip-already-attempted"`).
+
 ## Testing before you claim it works
 
 There is an automated self-test suite — `money-ledger-selftest.html`,
@@ -1134,7 +1219,7 @@ establishing each one's "born" snapshot, before any of them touch Drive
 for real** — mirrors what tests 11–16 already do, just made explicit
 here since it's easy to get this exact ordering wrong by accident.
 
-**What it covers (301 tests as of 2026-08-31, up from 23):**
+**What it covers (314 tests as of 2026-09-01, up from 23):**
 - **Sync/merge** (the original 23): the `mergeRecords` algorithm directly
   (only-local, only-remote, both-edited, delete-vs-edit,
   identical/skewed/ambiguous timestamps, empty sides, seed-category id
@@ -1175,6 +1260,18 @@ here since it's easy to get this exact ordering wrong by accident.
   `handleDriveAuthResult` for both connect and reconnect). See "General
   fixes (2026-08-31)"; the `window.open` retarget-across-origins behaviour
   itself is from a headed-Chrome test, not TEST_MODE.
+  **Tap-anywhere reconnect (2026-09-01, test 97):** `resolveGestureReconnect`
+  returns the right outcome for every state — `"skip-not-configured"` (GIS
+  absent), `"skip-not-needed"` (local-only, or connected with a live
+  token), `"reconnecting"` (connected + token gone) claiming the episode's
+  one attempt, `"skip-already-attempted"` on the next tap, the flag
+  surviving a dismissed attempt (`driveAuthErrorCallback`) but reset by a
+  real `handleDriveAuthResult` success, `"skip-in-flight"` while
+  `driveAuthWatchdog` is armed, and `"skip-on-connect-button"` for a tap on
+  `#driveConnectBtn` or a descendant. Plus a structural guard:
+  `client.requestAccessToken(` appears at exactly two call sites in
+  `app.js` (read from the served source), so no gesture-less caller can
+  slip in. See "General fixes (2026-09-01)".
 - **Money math:** `parseAmountToMinor` (rounding, rejection of
   zero/negative/blank/non-numeric input, no float drift across repeated
   parses), `formatMoney`/`formatCompact` (decimal-hiding on whole amounts,
