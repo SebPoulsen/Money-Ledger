@@ -2246,6 +2246,115 @@ async function runTests(H,d){
       status.className.indexOf("stale")!==-1);
   })();
 
+  /* 94. (2026-08-31) freshOAuthWindowName: GIS's frozen popup window name
+     gets a unique suffix per call (so window.open can't retarget a stale
+     tab); every other name is returned untouched. */
+  (function(){
+    if (typeof H.freshOAuthWindowName !== "function") {
+      assert("freshOAuthWindowName is exposed on the test hook (fail-first guard)", false);
+      return;
+    }
+    var f=H.freshOAuthWindowName;
+    var a=f("g_auth_token_window_abc123");
+    var b=f("g_auth_token_window_abc123");
+    assert("freshOAuthWindowName rewrites GIS's frozen name",
+      a!=="g_auth_token_window_abc123" && a.indexOf("g_auth_token_window_abc123.")===0);
+    assert("freshOAuthWindowName produces a different suffix on each call",
+      a!==b);
+    assert("freshOAuthWindowName keeps the g_auth_token_window prefix (a prefix check still matches)",
+      a.indexOf("g_auth_token_window")===0 && b.indexOf("g_auth_token_window")===0);
+    assert("freshOAuthWindowName rewrites the bare prefix too (GIS's base string)",
+      f("g_auth_token_window")!=="g_auth_token_window" &&
+      f("g_auth_token_window").indexOf("g_auth_token_window.")===0);
+    assert("freshOAuthWindowName leaves a non-OAuth name untouched",
+      f("someModal")==="someModal" && f("_blank")==="_blank" && f("")==="");
+    assert("freshOAuthWindowName only matches the prefix at position 0",
+      f("xg_auth_token_window")==="xg_auth_token_window");
+    assert("freshOAuthWindowName passes a non-string through unchanged",
+      f(undefined)===undefined && f(null)===null && f(123)===123);
+  })();
+
+  /* 95. (2026-08-31) openOAuthAwareWindow: the window.open wrapper rewrites
+     only GIS's popup name, passes everything else straight through, and
+     tracks lastOAuthWindow ONLY for the GIS popup. Driven with a spy
+     native-open so no real window is created. */
+  (function(){
+    if (typeof H.openOAuthAwareWindow !== "function" || typeof H.setNativeWindowOpen !== "function") {
+      assert("openOAuthAwareWindow + setNativeWindowOpen exposed (fail-first guard)", false);
+      return;
+    }
+    H.resetState();
+    var calls=[];
+    var fakeWin={ closed:false, close:function(){ this.closed=true; } };
+    H.setNativeWindowOpen(function(url,name,features){ calls.push({url:url,name:name,features:features}); return fakeWin; });
+
+    var r1=H.openOAuthAwareWindow("https://accounts.google.com/x","g_auth_token_window_zz","width=500");
+    assert("wrapper hands the native open a REWRITTEN name for the GIS popup",
+      calls[0].name!=="g_auth_token_window_zz" && calls[0].name.indexOf("g_auth_token_window_zz.")===0);
+    assert("wrapper passes url + features through untouched",
+      calls[0].url==="https://accounts.google.com/x" && calls[0].features==="width=500");
+    assert("wrapper returns the native window and tracks it as lastOAuthWindow",
+      r1===fakeWin && H.getLastOAuthWindow()===fakeWin);
+
+    var other={ closed:false, close:function(){ this.closed=true; } };
+    H.setNativeWindowOpen(function(url,name,features){ calls.push({url:url,name:name,features:features}); return other; });
+    H.openOAuthAwareWindow("https://example.com","plainModal","");
+    assert("a non-OAuth window.open call is passed through with its name intact",
+      calls[1].name==="plainModal");
+    assert("a non-OAuth window.open call does NOT become lastOAuthWindow",
+      H.getLastOAuthWindow()===fakeWin);
+
+    H.setNativeWindowOpen(null);
+    H.setLastOAuthWindow(null);
+  })();
+
+  /* 96. (2026-08-31) closeLastOAuthWindow closes the tracked popup and
+     nulls it, tolerates a close() that throws, and is invoked by every
+     settle path: the error callback, the watchdog, and the shared
+     success/failure handler (both connect and reconnect). */
+  (function(){
+    if (typeof H.closeLastOAuthWindow !== "function" ||
+        typeof H.driveAuthErrorCallback !== "function" ||
+        typeof H.onDriveAuthWatchdogFired !== "function" ||
+        typeof H.handleDriveAuthResult !== "function") {
+      assert("close/settle helpers exposed on the test hook (fail-first guard)", false);
+      return;
+    }
+    H.resetState();
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    function fw(){ return { closed:false, close:function(){ this.closed=true; } }; }
+
+    H.setLastOAuthWindow(null);
+    var threw=false; try { H.closeLastOAuthWindow(); } catch(e){ threw=true; }
+    assert("closeLastOAuthWindow with nothing tracked is a no-op", !threw);
+
+    var w1=fw(); H.setLastOAuthWindow(w1); H.closeLastOAuthWindow();
+    assert("closeLastOAuthWindow closes the tracked window and clears the ref",
+      w1.closed===true && H.getLastOAuthWindow()===null);
+
+    var w2={ closed:false, close:function(){ throw new Error("browser refused"); } };
+    H.setLastOAuthWindow(w2);
+    var threw2=false; try { H.closeLastOAuthWindow(); } catch(e){ threw2=true; }
+    assert("closeLastOAuthWindow swallows a close() that throws and still clears the ref",
+      !threw2 && H.getLastOAuthWindow()===null);
+
+    var e1=fw(); H.setLastOAuthWindow(e1); H.driveAuthErrorCallback({type:"popup_closed"});
+    assert("settle path: the error callback closes the OAuth popup",
+      e1.closed===true && H.getLastOAuthWindow()===null);
+
+    var e2=fw(); H.setLastOAuthWindow(e2); H.onDriveAuthWatchdogFired();
+    assert("settle path: the watchdog closes the OAuth popup",
+      e2.closed===true && H.getLastOAuthWindow()===null);
+
+    var e3=fw(); H.setLastOAuthWindow(e3); H.handleDriveAuthResult({error:"access_denied"}, false);
+    assert("settle path: the reconnect result handler closes the OAuth popup",
+      e3.closed===true && H.getLastOAuthWindow()===null);
+
+    var e4=fw(); H.setLastOAuthWindow(e4); H.handleDriveAuthResult({error:"access_denied"}, true);
+    assert("settle path: the first-connect result handler closes the OAuth popup",
+      e4.closed===true && H.getLastOAuthWindow()===null);
+  })();
+
   return results;
 }
 })();

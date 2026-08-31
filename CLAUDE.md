@@ -945,6 +945,79 @@ the deliberate-tap path after this fix — the change makes it visible and
 recoverable, and removes the unprompted/hourly recurrence, not the
 GIS-internal behaviour itself.
 
+**Update (2026-08-31): the deliberate-tap wrong-window bug turned out to
+be fixable from the app after all — see "General fixes (2026-08-31)"
+below.** The `544d987` fix above shipped and was confirmed on the real
+device to remove the *unprompted* picker, but disconnect→reconnect still
+reliably opened the picker in one specific stale tab every time — and that
+tab was **not** on `accounts.google.com` at the time, contradicting the
+"close the dormant Google tab" mitigation. Traced to `window.open`'s
+name-based retargeting surviving cross-origin navigation.
+
+## General fixes (2026-08-31)
+
+**The OAuth picker no longer retargets a stale tab on the deliberate
+connect/reconnect path.** Follow-up to "General fixes (2026-08-30)". After
+that fix deployed, `Disconnect → Connect` still opened the Google picker in
+the *same specific tab every time* — a tab that was **not** showing
+`accounts.google.com` at the time (whatever the user had last navigated it
+to). The "close the dangling Google tab" mitigation was the wrong model:
+
+- **Root cause, confirmed by direct test (headed Chrome + real handles):**
+  `window.open(url, name, features)` retargets any existing browsing
+  context with that `name` that the caller opened — *even after that tab
+  has navigated to a completely different origin* — as long as the opener
+  link isn't severed (`h2 === h1` after a cross-origin nav; a unique name
+  gives a fresh window; the opener can `.close()` a cross-origin popup it
+  opened). GIS builds exactly **one** popup window name per page load
+  (`g_auth_token_window_<random>`, random half fixed at `gsi/client`
+  eval), so on a tab that never reloads (a pinned phone tab) the very
+  first OAuth tab it ever opened is retargeted forever, wherever it now
+  sits and whatever it now shows. The persistent thing is *the tab*, bound
+  to that name for its whole life — not its contents. Scope note: this is
+  confined to one un-reloaded page-instance; a reload regenerates `Id` and
+  old orphan tabs become un-retargetable.
+
+- **Fix (`app.js`, near `driveIsConfigured`):** wrap `window.open` so any
+  name starting `g_auth_token_window` gets a unique `.<suffix>` appended
+  (`freshOAuthWindowName` — pure, everything else passed through
+  untouched), forcing GIS to open a fresh window every call.
+  `openOAuthAwareWindow` also captures the returned handle as
+  `lastOAuthWindow`; `settleDriveAuth()` (= `clearDriveAuthWatchdog()` +
+  `closeLastOAuthWindow()`) runs on every settle path — the shared
+  `handleDriveAuthResult`, `driveAuthErrorCallback`, and
+  `onDriveAuthWatchdogFired` — so fresh windows don't pile up. Money
+  Ledger never calls `window.open` itself, so the wrapper only ever
+  affects GIS's popup.
+
+- **KNOWN FRAGILITY — watch for this.** The wrapper is safe *only* because
+  GIS never reads the popup window name back: auth-result routing is by
+  `origin` + a per-request nonce in the `redirect_uri` + `client_id`, with
+  the name used *solely* in the `window.open()` call. That was established
+  by **reading the current `gsi/client` source (2026-08-31)** — it is
+  **not** a public API guarantee. If a future GIS update starts
+  correlating on the window name, this wrapper would **silently stop
+  preventing the retarget**: no error, no test failure (TEST_MODE never
+  loads real GIS). Mitigation baked in: the prefix is preserved (only a
+  suffix is appended), so a *prefix*-based GIS check still matches; only an
+  exact-name check would break. If the wrong-window bug ever resurfaces
+  after a GIS update, this wrapper is the first thing to re-verify against
+  the then-current `gsi/client` source.
+
+- **Verification:** 19 new self-test cases (`freshOAuthWindowName` rewrite
+  + uniqueness + prefix preservation + non-OAuth/non-string pass-through;
+  `openOAuthAwareWindow` rewriting only GIS's name and tracking only GIS's
+  popup, driven by a spy native-open; `closeLastOAuthWindow` closing +
+  clearing + tolerating a throwing `close()`; and `closeLastOAuthWindow`
+  firing on all three settle paths). Watched to fail against pre-fix code.
+  Suite 301/0. The cross-origin retarget behaviour, the "unique name →
+  fresh window", and "opener can close a cross-origin popup" facts are
+  from a headed-Chrome test (Blink; WebKit/Chrome-iOS not directly
+  tested — but the user already demonstrated the retarget there, and
+  "fresh name → fresh window" is engine-independent). **Not yet
+  real-device-confirmed by Sebastian** — branch `fix-oauth-window-reuse`,
+  pending a disconnect→reconnect check on the deployed site.
+
 ## Testing before you claim it works
 
 There is an automated self-test suite — `money-ledger-selftest.html`,
@@ -1046,7 +1119,7 @@ establishing each one's "born" snapshot, before any of them touch Drive
 for real** — mirrors what tests 11–16 already do, just made explicit
 here since it's easy to get this exact ordering wrong by accident.
 
-**What it covers (282 tests as of 2026-08-30, up from 23):**
+**What it covers (301 tests as of 2026-08-31, up from 23):**
 - **Sync/merge** (the original 23): the `mergeRecords` algorithm directly
   (only-local, only-remote, both-edited, delete-vs-edit,
   identical/skewed/ambiguous timestamps, empty sides, seed-category id
@@ -1076,6 +1149,17 @@ here since it's easy to get this exact ordering wrong by accident.
   "General fixes (2026-08-30)". The two claims the self-test *can't* reach
   (page load never popups; GIS freezes one popup window name per page
   load) are covered by headless `gsi/client` probes, not TEST_MODE.
+  **OAuth popup window-name wrapper (2026-08-31, tests 94–96):**
+  `freshOAuthWindowName` rewrites only GIS's `g_auth_token_window*` name
+  (unique suffix per call, prefix preserved) and passes every other name /
+  non-string through untouched; `openOAuthAwareWindow` (driven by a spy
+  native-open) rewrites only that name and tracks only that popup as
+  `lastOAuthWindow`; `closeLastOAuthWindow` closes + clears the ref +
+  tolerates a `close()` that throws; and it fires on all three settle
+  paths (`driveAuthErrorCallback`, `onDriveAuthWatchdogFired`,
+  `handleDriveAuthResult` for both connect and reconnect). See "General
+  fixes (2026-08-31)"; the `window.open` retarget-across-origins behaviour
+  itself is from a headed-Chrome test, not TEST_MODE.
 - **Money math:** `parseAmountToMinor` (rounding, rejection of
   zero/negative/blank/non-numeric input, no float drift across repeated
   parses), `formatMoney`/`formatCompact` (decimal-hiding on whole amounts,
