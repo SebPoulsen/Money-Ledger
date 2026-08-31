@@ -1446,15 +1446,22 @@ function driveIsConfigured() {
   return !!GOOGLE_CLIENT_ID && typeof google !== "undefined" && google.accounts && google.accounts.oauth2;
 }
 
-function driveTokenClientFor(callback) {
+// errorCallback is not optional in practice: without an error_callback set,
+// GIS's own abandoned/closed-popup detection (`_.ug` in gsi/client) never
+// arms, so a blocked, closed, or misrouted popup produces no callback at
+// all — the flow just hangs, silently, forever. That silent-swallow was
+// half of the mobile "nothing happened" bug. Every caller passes one now.
+function driveTokenClientFor(callback, errorCallback) {
   if (!driveTokenClient) {
     driveTokenClient = google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID,
       scope: DRIVE_SCOPE,
       callback,
+      error_callback: errorCallback,
     });
   } else {
     driveTokenClient.callback = callback;
+    driveTokenClient.error_callback = errorCallback;
   }
   return driveTokenClient;
 }
@@ -1703,8 +1710,51 @@ async function syncNow(showToast) {
   renderSettings();
 }
 
+// GIS reuses one popup window name for a page's whole lifetime (verified
+// against the real gsi/client: `g_auth_token_window_<random>`, the random
+// part fixed at script-eval time). On a long-lived mobile tab that never
+// reloads, a second requestAccessToken() therefore retargets the *first*
+// popup's tab — and if that tab lingered (mobile Chrome often ignores
+// GIS's window.close()), the auth result posts back to a stale opener and
+// neither callback ever fires. The watchdog is the floor under that: if
+// the flow produces no success and no error within the window, tell the
+// user rather than leaving them on a blank Google tab wondering.
+const DRIVE_AUTH_WATCHDOG_MS = 120000;
+let driveAuthWatchdog = null;
+
+function armDriveAuthWatchdog() {
+  clearTimeout(driveAuthWatchdog);
+  driveAuthWatchdog = setTimeout(() => {
+    driveAuthWatchdog = null;
+    toast("Google sign-in didn't come back. Close any stray Google tab, then tap Reconnect again.");
+    renderSettings();
+  }, DRIVE_AUTH_WATCHDOG_MS);
+}
+
+function clearDriveAuthWatchdog() {
+  clearTimeout(driveAuthWatchdog);
+  driveAuthWatchdog = null;
+}
+
+// Passed as error_callback to every token request. GIS calls this for
+// popup_failed_to_open, popup_closed (once armed — see driveTokenClientFor),
+// and other GIS-side errors.
+function driveAuthErrorCallback(err) {
+  clearDriveAuthWatchdog();
+  const type = err && err.type ? err.type : "";
+  if (type === "popup_closed") {
+    toast("Google sign-in was cancelled.");
+  } else if (type === "popup_failed_to_open") {
+    toast("Couldn't open the Google sign-in window — check that pop-ups aren't blocked, then try again.");
+  } else {
+    toast("Google sign-in failed (" + (type || "unknown") + "). Try again in a moment.");
+  }
+  renderSettings();
+}
+
 function connectDrive() {
-  driveTokenClientFor(async (resp) => {
+  const client = driveTokenClientFor(async (resp) => {
+    clearDriveAuthWatchdog();
     if (resp.error) {
       toast("Google Drive connection was cancelled or failed.");
       return;
@@ -1720,11 +1770,17 @@ function connectDrive() {
       console.error(err);
       toast("Couldn't reach Google Drive (" + (err && err.message ? err.message : err) + "). Try again in a moment.");
     }
-  }).requestAccessToken({ prompt: "consent" });
+  }, driveAuthErrorCallback);
+  // Armed BEFORE requestAccessToken: GIS calls error_callback synchronously
+  // when window.open returns null (popup blocked), so arming after would
+  // leave that timer running with nothing to clear it.
+  armDriveAuthWatchdog();
+  client.requestAccessToken({ prompt: "consent" });
 }
 
 function reconnectDrive() {
-  driveTokenClientFor(async (resp) => {
+  const client = driveTokenClientFor(async (resp) => {
+    clearDriveAuthWatchdog();
     if (resp.error) {
       toast("Reconnect failed — try again.");
       return;
@@ -1738,7 +1794,9 @@ function reconnectDrive() {
       console.error(err);
       toast("Couldn't reach Google Drive (" + (err && err.message ? err.message : err) + "). Try again in a moment.");
     }
-  }).requestAccessToken({ prompt: "" });
+  }, driveAuthErrorCallback);
+  armDriveAuthWatchdog();
+  client.requestAccessToken({ prompt: "" });
 }
 
 function disconnectDrive() {
@@ -1764,54 +1822,63 @@ function handleDriveButtonClick() {
   }
 }
 
-// onSettled (optional) fires exactly once, after the pull attempt settles
+// What resuming Drive sync on page load should do, given only this device's
+// connection state and whether a still-valid cached access token exists.
+// Its own function purely so the self-test can assert the decision without
+// going near Google Identity Services (which TEST_MODE never loads):
+//   "not-connected"        -> this device isn't synced; do nothing
+//   "resume-from-cache"    -> a token from earlier this hour is still good
+//   "await-user-reconnect" -> connected but no usable token; wait for a tap
+function pageLoadSyncPlan() {
+  if (!state.settings.driveConnected) return "not-connected";
+  return loadDriveTokenCache() ? "resume-from-cache" : "await-user-reconnect";
+}
+
+// Called once on load (real mode only). Resumes sync ONLY from a still-valid
+// cached token; it never triggers an OAuth popup.
+//
+// It used to (as initDriveSilentReconnect) call requestAccessToken({prompt:
+// ""}) here on every load with no cached token, believing an empty prompt
+// does a silent, popup-free token refresh. It does not: GIS's token client
+// only skips the popup for prompt:"none" *and* an in-page refresh session a
+// fresh load doesn't have — "" always calls window.open (verified against
+// the real gsi/client). An un-activated window.open on page load is the bug
+// this removes: on mobile it lands in the wrong tab (GIS reuses one frozen
+// popup window name for the page's whole lifetime) and then dies silently.
+// A backendless static site cannot refresh a Google token without a user
+// gesture — hard rule 4 rules out the server-side flow that could — so the
+// honest behaviour is to stop pretending: show the "needs reconnect" state
+// and wait for the tap. See CLAUDE.md "General fixes (2026-08-30)".
+//
+// onSettled (optional) fires exactly once, after the resume attempt settles
 // one way or another — success, failure, or "nothing to do here" — never
-// left permanently unfired. Used by the DOMContentLoaded handler below to
-// defer applyDueRecurring() until after a connected device has pulled
-// whatever another device already synced, closing (for the common,
-// online case) the window where two devices could each independently
-// decide "not yet inserted" before either has seen the other's insertion
-// (2026-08-21, see CLAUDE.md "Recurring design decisions"). Deliberately
-// still calls applyDueRecurring() even when the pull fails or times out —
-// a dead network must not strand a device without its recurring entries;
-// the deterministic insert id (recurringInsertId) is the backstop for
-// whatever race survives this ordering fix.
-function initDriveSilentReconnect(onSettled) {
+// left permanently unfired. The DOMContentLoaded handler below uses it to
+// defer applyDueRecurring() until after a cache-resumed device has pulled
+// whatever another device already synced, closing (for the common online
+// case) the window where two devices each independently decide "not yet
+// inserted" before seeing the other's insertion (2026-08-21, see CLAUDE.md
+// "Recurring design decisions"). It still fires in the "await-user-
+// reconnect" and failed-pull branches too — a device without a live token
+// must not be stranded without its recurring entries; the deterministic
+// insert id (recurringInsertId) is the backstop for whatever race survives.
+function resumeDriveSyncIfTokenCached(onSettled) {
   const done = () => { if (onSettled) onSettled(); };
   if (TEST_MODE) { done(); return; } // tests drive sync explicitly via the hook, never real OAuth
-  if (!driveIsConfigured() || !state.settings.driveConnected) { done(); return; }
 
-  const cached = loadDriveTokenCache();
-  if (cached) {
-    // Still-valid token from an earlier page load this hour — use it
-    // directly, no Google round-trip at all, so this reload doesn't even
-    // attempt the (increasingly third-party-cookie-blocked) silent iframe
-    // check, let alone show a picker.
-    driveAccessToken = cached.token;
-    resolveDriveFileId()
-      .then(() => syncNow(false))
-      .catch((err) => console.error(err))
-      .then(done);
+  const plan = pageLoadSyncPlan();
+  if (plan === "not-connected") { done(); return; }
+  if (plan === "await-user-reconnect") {
+    renderSettings(); // surfaces "Drive connected — needs reconnect"
+    done();
     return;
   }
-
-  driveTokenClientFor(async (resp) => {
-    if (resp.error) {
-      renderSettings();
-      done();
-      return;
-    }
-    driveAccessToken = resp.access_token;
-    saveDriveTokenCache(resp.access_token, resp.expires_in);
-    try {
-      await resolveDriveFileId();
-      await syncNow(false);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      done();
-    }
-  }).requestAccessToken({ prompt: "" });
+  // plan === "resume-from-cache": still-valid token from an earlier page
+  // load this hour — use it directly, no Google round-trip, no popup.
+  driveAccessToken = loadDriveTokenCache().token;
+  resolveDriveFileId()
+    .then(() => syncNow(false))
+    .catch((err) => console.error(err))
+    .then(done);
 }
 
 // ---------- fab ----------
@@ -2329,6 +2396,7 @@ function exposeTestHook() {
     resetState: () => {
       state = defaultState();
       localStorage.removeItem(STORAGE_KEY);
+      clearDriveTokenCache();
       FAKE_DRIVE = {};
       fakeDriveNextId = 1;
       driveAccessToken = null;
@@ -2357,6 +2425,11 @@ function exposeTestHook() {
 
     getFakeDrive: () => FAKE_DRIVE,
     resetFakeDrive: () => { FAKE_DRIVE = {}; fakeDriveNextId = 1; },
+
+    // Page-load sync decision + the token cache it reads, so a test can
+    // assert "connected but no usable token -> wait for a tap, never a
+    // popup" without touching Google Identity Services.
+    pageLoadSyncPlan, saveDriveTokenCache, clearDriveTokenCache,
 
     syncNow, resolveDriveFileId, mergeRecords, sameContent, newerSide,
     ENTRY_CONTENT_FIELDS, CATEGORY_CONTENT_FIELDS, AMBIGUOUS_WINDOW_MS, DRIVE_FILE_NAME,
@@ -2420,15 +2493,17 @@ document.addEventListener("DOMContentLoaded", () => {
   // Real mode only — TEST_MODE drives dueRecurring/applyDueRecurring
   // explicitly via the hook, so a sync test's resetState() never gets a
   // surprise auto-inserted entry it didn't ask for. A Drive-connected
-  // device pulls first, so it sees what another device already synced
-  // before deciding what's due (see initDriveSilentReconnect above); a
-  // local-only device has no other side to race against, so it can
-  // decide immediately.
+  // device with a still-valid cached token pulls first, so it sees what
+  // another device already synced before deciding what's due (see
+  // resumeDriveSyncIfTokenCached above); without a cached token it can't
+  // pull without a user tap, so applyDueRecurring runs immediately (the
+  // deterministic recurringInsertId is the backstop). A local-only device
+  // has no other side to race against, so it also decides immediately.
   if (!TEST_MODE && state.settings.driveConnected) {
-    initDriveSilentReconnect(applyDueRecurring);
+    resumeDriveSyncIfTokenCached(applyDueRecurring);
   } else {
     if (!TEST_MODE) applyDueRecurring();
-    initDriveSilentReconnect();
+    resumeDriveSyncIfTokenCached();
   }
   if (TEST_MODE) exposeTestHook();
 });

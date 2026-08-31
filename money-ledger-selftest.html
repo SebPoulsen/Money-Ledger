@@ -2183,6 +2183,69 @@ async function runTests(H,d){
       d.querySelectorAll("#register .entryrow").length===1);
   })();
 
+  /* 92. REGRESSION (2026-08-30): page-load sync must never trigger an OAuth
+     popup. The old initDriveSilentReconnect (now resumeDriveSyncIfTokenCached)
+     called requestAccessToken({prompt:""}) on load with no cached token,
+     believing "" is a silent refresh — it isn't, GIS always opens a popup
+     for it, and an un-activated popup on mobile lands in the wrong tab and
+     dies silently. pageLoadSyncPlan is the extracted decision:
+     connected-but-no-token resolves to "await-user-reconnect" (render the
+     Reconnect state, wait for a tap), never to anything that would reach
+     requestAccessToken. */
+  (function(){
+    H.resetState();
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
+    if (typeof H.pageLoadSyncPlan !== "function" ||
+        typeof H.saveDriveTokenCache !== "function" ||
+        typeof H.clearDriveTokenCache !== "function") {
+      assert("pageLoadSyncPlan + token-cache helpers are exposed on the test hook", false);
+      return;
+    }
+    var plan=H.pageLoadSyncPlan;
+    H.clearDriveTokenCache();
+    assert("pageLoadSyncPlan: a local-only device returns 'not-connected'",
+      plan()==="not-connected");
+
+    var s2=H.getState(); s2.settings.driveConnected=true; H.setState(s2);
+    H.clearDriveTokenCache();
+    assert("pageLoadSyncPlan: connected with no cached token returns 'await-user-reconnect' — the fix, no page-load popup",
+      plan()==="await-user-reconnect");
+
+    H.saveDriveTokenCache("cached-token-xyz", 3600);
+    assert("pageLoadSyncPlan: connected with a still-valid cached token returns 'resume-from-cache'",
+      plan()==="resume-from-cache");
+
+    H.saveDriveTokenCache("stale-token", 30); // inside the 60s safety margin
+    assert("pageLoadSyncPlan: a cached token inside the safety margin is ignored -> 'await-user-reconnect'",
+      plan()==="await-user-reconnect");
+    H.clearDriveTokenCache();
+  })();
+
+  /* 93. REGRESSION (2026-08-30): the state a page load now lands in when
+     the token has expired — connected, no access token, no cached token —
+     renders the "Reconnect Google Drive" affordance (the stale state that
+     already existed in renderSettings), rather than the old behaviour of
+     silently firing an un-activated OAuth popup. */
+  (function(){
+    if (typeof H.clearDriveTokenCache !== "function") {
+      assert("clearDriveTokenCache is exposed on the test hook (fail-first guard)", false);
+      return;
+    }
+    H.resetState();
+    var s=H.getState();
+    s.settings.currency="DKK";
+    s.settings.driveConnected=true; // driveAccessToken stays null (resetState cleared it)
+    H.setState(s);
+    H.clearDriveTokenCache();
+    H.renderAll();
+    var status=d.getElementById("syncStatus");
+    assert("connected-but-no-token renders the Reconnect button, not an auto-popup",
+      d.getElementById("driveConnectBtn").textContent==="Reconnect Google Drive");
+    assert("connected-but-no-token shows the 'needs reconnect' status label + stale class",
+      status.querySelector(".label").textContent==="Drive connected — needs reconnect" &&
+      status.className.indexOf("stale")!==-1);
+  })();
+
   return results;
 }
 })();

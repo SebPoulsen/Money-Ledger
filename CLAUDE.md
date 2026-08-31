@@ -877,6 +877,74 @@ any code:
   confirmed by Sebastian on the real site — not just verified via the
   self-test suite and screenshots pre-merge.
 
+## General fixes (2026-08-30)
+
+**Google sign-in stops opening its popup in the wrong browser tab on
+mobile.** Reported by Sebastian on Chrome for iOS: disconnect→reconnect
+Drive and the account picker consistently lands in a *different*, unrelated
+pinned tab — the same one every time, regardless of tab order — and picking
+an account there often leaves that tab on a Google page instead of
+returning. Diagnosed rather than assumed to be the same class as the old
+mobile-Safari popup issue (Backlog #1 / SYNC-LESSONS #8) — it isn't. Two
+independent causes:
+
+- **Page-load token refresh was firing an un-activated `window.open`.**
+  `initDriveSilentReconnect()` (now renamed `resumeDriveSyncIfTokenCached`)
+  called `requestAccessToken({ prompt: "" })` on every `DOMContentLoaded`
+  where the cached token had expired, in the belief that an empty prompt
+  does a silent, popup-free token refresh. It does not — confirmed by
+  probing the real `gsi/client`: GIS's token client only skips the popup
+  for `prompt: "none"` *and* an in-page refresh session a fresh load
+  doesn't have; `""` always calls `window.open`. An un-activated
+  `window.open` on load is handled erratically by mobile browsers
+  (background tab, wrong focus, severed opener) and, because mobile
+  discards and reloads backgrounded tabs, could fire from a tab the user
+  wasn't even looking at — the "picker in a tab that wasn't doing
+  anything" symptom. **Fix:** page load now *never* triggers an OAuth
+  popup. The decision is extracted as `pageLoadSyncPlan()` →
+  `"not-connected"` | `"resume-from-cache"` | `"await-user-reconnect"`. A
+  backendless static site cannot refresh a Google token without a user
+  gesture (hard rule 4 rules out the server-side flow that could), so with
+  no valid cached token the app shows the already-existing "Drive
+  connected — needs reconnect" state and waits for a tap. Sync still
+  resumes with zero friction whenever the cached token (its own
+  `localStorage` key, ~1hr life) is still good.
+
+- **GIS reuses one frozen popup window name for a page's whole lifetime.**
+  Verified empirically (stub `window.open`, load real `gsi/client`, call
+  `requestAccessToken` 3×): every call opens `window.open(url,
+  "g_auth_token_window_<hex>", …)` with the **same** `<hex>` — it's
+  randomised once at script-eval and never again — and it regenerates only
+  on a full page reload. Sebastian's Money Ledger tab is *pinned* and
+  never reloads, so that name is fixed forever; each connect/reconnect
+  `window.open`s the same name, and the browser retargets whatever stale
+  popup tab still holds it (mobile Chrome frequently ignores GIS's
+  `window.close()`). This half is **not fixable from the app** — GIS owns
+  the name; the token client has no `ux_mode: "redirect"`. Mitigations
+  shipped instead: (1) an `error_callback` on every token request —
+  without one, GIS's *own* abandoned/closed-popup detection never arms and
+  every failure is swallowed silently (this was the "I tap an account and
+  nothing happens" half); (2) a 120s watchdog that toasts "Google sign-in
+  didn't come back…" if neither callback fires, so a misrouted flow is
+  visible and recoverable instead of a silent dead end.
+
+**Verification:** self-test suite (6 new cases — `pageLoadSyncPlan`'s four
+outcomes incl. the safety-margin edge, and the connected-but-no-token
+state rendering the Reconnect affordance; watched to fail against pre-fix
+code; suite 282/0). The "never a page-load popup" and "frozen window name"
+claims are backed by the two headless `gsi/client` probes above plus the
+minified-source reading, not by the self-test (TEST_MODE never loads GIS).
+**Not yet real-device-confirmed by Sebastian** — built on branch
+`fix-oauth-wrong-window`, pending: (a) opening the app >1hr after last sync
+and confirming no unprompted picker + the Reconnect button showing; (b)
+tapping Reconnect and confirming it completes; (c) backing out of the
+picker and confirming a toast now appears instead of silence; (d) the
+stale-tab diagnostic (close any dormant `accounts.google.com` tab, then
+reconnect). The frozen-window-name reuse is *expected to still occur* for
+the deliberate-tap path after this fix — the change makes it visible and
+recoverable, and removes the unprompted/hourly recurrence, not the
+GIS-internal behaviour itself.
+
 ## Testing before you claim it works
 
 There is an automated self-test suite — `money-ledger-selftest.html`,
@@ -948,7 +1016,7 @@ failing/total summary.
   object instead. This isn't "tests avoid calling the real network
   function" — the real function itself cannot reach `googleapis.com` in
   this mode, structurally, not by convention.
-- No real OAuth popup ever fires in TEST_MODE (`initDriveSilentReconnect`
+- No real OAuth popup ever fires in TEST_MODE (`resumeDriveSyncIfTokenCached`
   no-ops); tests that need a connected state call `testConnectDrive()`,
   which sets the same fields a real successful connect would leave behind.
 - `window.confirm` is stubbed to auto-accept in TEST_MODE only, so
@@ -978,7 +1046,7 @@ establishing each one's "born" snapshot, before any of them touch Drive
 for real** — mirrors what tests 11–16 already do, just made explicit
 here since it's easy to get this exact ordering wrong by accident.
 
-**What it covers (276 tests as of 2026-08-30, up from 23):**
+**What it covers (282 tests as of 2026-08-30, up from 23):**
 - **Sync/merge** (the original 23): the `mergeRecords` algorithm directly
   (only-local, only-remote, both-edited, delete-vs-edit,
   identical/skewed/ambiguous timestamps, empty sides, seed-category id
@@ -997,7 +1065,17 @@ here since it's easy to get this exact ordering wrong by accident.
   same via corrupt-`localStorage` recovery where `DEVICE_ID` survives —
   asserts the epoch `updatedAt` on recovered seeds and that
   `loadState()`'s fallback regenerates `DEVICE_ID`. See "Seed category
-  resurrection" under Sync design decisions.
+  resurrection" under Sync design decisions. **Page-load sync trigger
+  (2026-08-30, tests 92/93):** `pageLoadSyncPlan()` returns
+  `"await-user-reconnect"` (never anything that reaches an OAuth popup)
+  when connected with no usable cached token — incl. the safety-margin
+  edge where a near-expiry token is treated as gone — `"resume-from-cache"`
+  only on a still-valid token, `"not-connected"` for a local-only device;
+  and the connected-but-no-token state renders the "Reconnect Google
+  Drive" button + "needs reconnect" status rather than firing a popup. See
+  "General fixes (2026-08-30)". The two claims the self-test *can't* reach
+  (page load never popups; GIS freezes one popup window name per page
+  load) are covered by headless `gsi/client` probes, not TEST_MODE.
 - **Money math:** `parseAmountToMinor` (rounding, rejection of
   zero/negative/blank/non-numeric input, no float drift across repeated
   parses), `formatMoney`/`formatCompact` (decimal-hiding on whole amounts,
