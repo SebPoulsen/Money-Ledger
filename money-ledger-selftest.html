@@ -1494,8 +1494,15 @@ async function runTests(H,d){
      in this file to invoke real app code without depending on real
      browser focus/rendering behavior — it proves the app CALLED
      qaAmount.focus(), which is what the fix actually does, regardless of
-     whether the hidden iframe honors it visibly. */
+     whether the hidden iframe honors it visibly.
+     matchMedia is stubbed to the laptop case (fine pointer) for the whole
+     block: the post-log refocus is phone-suppressed as of 2026-09-01 (see
+     block 98 / "Quick-add design decisions"), so this base-behavior
+     assertion must pin the non-phone environment rather than depend on
+     whatever pointer/width the suite happens to run under. */
   (function(){
+    var w=d.defaultView, realMM=w.matchMedia;
+    w.matchMedia=function(q){ return { matches:false, media:q }; }; // never a phone
     H.resetState(); H.setView(2026,7);
     var s=H.getState(); s.settings.currency="DKK"; H.setState(s);
     H.renderAll();
@@ -1508,6 +1515,7 @@ async function runTests(H,d){
     amountEl.focus=function(){ focusCalls++; return realFocus.apply(this,arguments); };
     d.getElementById("quickaddForm").dispatchEvent(new (d.defaultView.Event)("submit",{cancelable:true}));
     amountEl.focus=realFocus;
+    w.matchMedia=realMM;
     assert("setup sanity: submitting quick-add with a valid amount actually creates the entry",
       H.getState().entries.some(function(e){return e.note==="Coffee" && e.amountMinor===4200;}));
     assert("REGRESSION after logging an entry via quick-add, focus is sent back to the amount field",
@@ -2459,6 +2467,86 @@ async function runTests(H,d){
     w.google=savedGoogle;
     H.clearDriveAuthWatchdog();
     H.setDriveReconnectAttempted(false);
+    H.resetState();
+  })();
+
+  /* 98. (2026-09-01) The post-log amount-field auto-focus is suppressed on
+     phones only: isTouchPhone() === matchMedia("(max-width:1000px) and
+     (pointer:coarse)").matches — BOTH clauses. A laptop (incl. a narrow /
+     split-screen window, or a touchscreen laptop still driven by its
+     trackpad) fails at least one clause and keeps the refocus; a false
+     positive there breaks rapid keyboard entry, which is the direction
+     this must not fail in. Only the quick-add SUBMIT refocus is gated —
+     the "Today" button and the FAB deliberately still focus. Asserts on
+     whether qaAmount.focus() is CALLED under a stubbed matchMedia, never
+     on document.activeElement (the display:none test iframe can't hold
+     real focus — same limitation as blocks 56/59). See "Quick-add design
+     decisions" in CLAUDE.md. */
+  (function(){
+    if (typeof H.isTouchPhone !== "function" || typeof H.maybeRefocusAmount !== "function") {
+      assert("isTouchPhone + maybeRefocusAmount are exposed on the test hook (fail-first guard)", false);
+      return;
+    }
+    var w=d.defaultView, realMM=w.matchMedia;
+    // Fake matchMedia: a query matches iff every "(feature: value)" clause
+    // in it (whitespace-stripped) is present in `active`. Lets each case
+    // dial width and pointer independently of the real environment.
+    function stubMM(active){
+      w.matchMedia=function(q){
+        var clauses=(q.match(/\([^)]*\)/g)||[]).map(function(c){ return c.replace(/\s+/g,""); });
+        return { matches: clauses.every(function(c){ return active.indexOf(c)!==-1; }), media:q };
+      };
+    }
+    var NARROW="(max-width:1000px)", COARSE="(pointer:coarse)",
+        WIDE="(min-width:1001px)", FINE="(pointer:fine)";
+
+    // --- isTouchPhone truth table (the two clauses it actually queries)
+    stubMM([NARROW,COARSE]);
+    assert("isTouchPhone: narrow width + coarse pointer -> true (a phone)", H.isTouchPhone()===true);
+    stubMM([NARROW,FINE]);
+    assert("isTouchPhone: narrow width but fine pointer (small/split laptop window) -> false", H.isTouchPhone()===false);
+    stubMM([WIDE,COARSE]);
+    assert("isTouchPhone: coarse pointer but wide (touchscreen laptop, full width) -> false", H.isTouchPhone()===false);
+    stubMM([WIDE,FINE]);
+    assert("isTouchPhone: wide + fine pointer (ordinary laptop) -> false", H.isTouchPhone()===false);
+
+    // --- maybeRefocusAmount honors isTouchPhone directly
+    H.resetState(); H.setView(2026,7);
+    var s=H.getState(); s.settings.currency="DKK"; H.setState(s); H.renderAll();
+    var amountEl=d.getElementById("qaAmount");
+    var realFocus=amountEl.focus, calls=0;
+    amountEl.focus=function(){ calls++; return realFocus.apply(this,arguments); };
+
+    calls=0; stubMM([WIDE,FINE]); H.maybeRefocusAmount();
+    assert("maybeRefocusAmount: laptop -> focus() called", calls===1);
+    calls=0; stubMM([NARROW,COARSE]); H.maybeRefocusAmount();
+    assert("maybeRefocusAmount: phone -> focus() NOT called", calls===0);
+
+    // --- the real quick-add submit path routes through it
+    calls=0; stubMM([NARROW,COARSE]);
+    amountEl.value="42"; d.getElementById("qaNote").value="Coffee-phone";
+    d.getElementById("quickaddForm").dispatchEvent(new (w.Event)("submit",{cancelable:true}));
+    assert("setup sanity: the phone-case submit still creates the entry (only the refocus is suppressed)",
+      H.getState().entries.some(function(e){return e.note==="Coffee-phone" && e.amountMinor===4200;}));
+    assert("quick-add submit on a phone does NOT refocus the amount field", calls===0);
+
+    calls=0; stubMM([WIDE,FINE]);
+    amountEl.value="7"; d.getElementById("qaNote").value="Coffee-laptop";
+    d.getElementById("quickaddForm").dispatchEvent(new (w.Event)("submit",{cancelable:true}));
+    assert("quick-add submit on a laptop still refocuses the amount field (unchanged)", calls===1);
+
+    // --- Today button and FAB are deliberately NOT gated: still focus on a phone
+    calls=0; stubMM([NARROW,COARSE]);
+    d.getElementById("qaDate").value="2026-08-05"; fireChange(d.getElementById("qaDate"));
+    d.getElementById("qaToday").click();
+    assert("the Today button still focuses the amount field on a phone (deliberately not gated)", calls===1);
+
+    calls=0; stubMM([NARROW,COARSE]);
+    d.getElementById("fab").click();
+    assert("the FAB still focuses the amount field on a phone (deliberately not gated)", calls===1);
+
+    amountEl.focus=realFocus;
+    w.matchMedia=realMM;
     H.resetState();
   })();
 

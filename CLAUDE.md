@@ -656,6 +656,69 @@ set. What landed:
   real-device-verified by Sebastian** — built on a branch
   (`category-filter`), pending a phone check at 390px before merge.
 
+## Quick-add design decisions
+
+**The post-log amount-field auto-focus is suppressed on phones only
+(2026-09-01).** After a successful quick-add submit, the handler clears
+the amount/note fields and calls `document.getElementById("qaAmount")
+.focus()` so a run of entries can be typed one after another without
+reaching for the mouse (`initQuickAdd`, the `form` submit listener). On a
+laptop this is exactly right and stays untouched. On a phone it's a small
+irritation: it pops the soft keyboard back up the instant you've logged
+something, right when the on-screen "Log it" button is the close, natural
+thing to tap for the next entry — the keyboard is in the way, not helping.
+
+- **Detection is `matchMedia("(max-width: 1000px) and (pointer: coarse)")`
+  — both conditions, AND.** Extracted as `isTouchPhone()` (the codebase's
+  first `matchMedia` call — every breakpoint before this lived only in
+  `style.css`), consumed via a one-line `maybeRefocusAmount()` wrapper so
+  the guard has a single home and the self-test has a single seam. Only
+  the post-submit call at the end of the submit handler is guarded.
+- **Why AND, not width-only or touch-only.** The two failure directions
+  are not equally costly. A false positive — a laptop mistaken for a phone
+  — silently kills the rapid keyboard-entry workflow Sebastian actually
+  relies on, and the hard requirement on this change was "keep laptop
+  exactly as-is." A false negative — a phone mistaken for a laptop — just
+  restores today's mild annoyance. AND-ing width and pointer biases every
+  uncertain device toward the laptop behavior, which is the safe
+  direction. Width-only would suppress auto-focus on a narrow or
+  split-screen desktop window (a real laptop case, wrong direction).
+  Touch-only would misfire on touchscreen laptops and 2-in-1s in tablet
+  mode (also a real laptop case). The combined test only "misfires" on a
+  narrow touch device with no mouse that is genuinely a laptop — i.e. a
+  tablet, where tapping the button really is the natural gesture anyway.
+- **Why 1000px.** Reuses the app's existing primary breakpoint (`.cols`
+  collapses to one column there). Because it's AND-ed with `pointer:
+  coarse`, being generous on width is safe — a coarse-pointer device up
+  to 1000px wide is a phone or small tablet, both of which want the
+  no-keyboard-pop behavior, and this width still catches a phone held in
+  landscape. The tighter 700px breakpoint would miss landscape phones for
+  no benefit.
+- **The "Today" button and the FAB keep focusing the amount field
+  unconditionally, phone included** — deliberately not changed. Both are
+  "I'm about to type an amount" gestures: you tap "Today" mid-logging to
+  reset the sticky date for a backdated batch, and the FAB exists solely
+  to jump you into logging. In both, the keyboard appearing is the next
+  thing you wanted anyway. The post-submit case is the only one where
+  "maybe I'm done now" is plausible, which is what singles it out.
+- **No schema / storage / sync / migration change** — a pure runtime
+  behavior gate, nothing persisted.
+- **Verification:** self-test cases asserting `.focus()` *is* called with
+  a mocked non-phone `matchMedia` and is *not* called with a mocked phone
+  one (stubbing the iframe's `matchMedia`, spying on `qaAmount.focus` — no
+  `activeElement` assertion, since the hidden test iframe can't hold real
+  browser focus so that check couldn't tell a pass from a failure), plus
+  a truth-table test of `isTouchPhone()` across the four width/pointer
+  combinations. Watched to fail against pre-change code two ways: the new
+  tests on the old `app.js` trip the exposed-function guard (`1 failing`,
+  same pattern as tests 94–96), and deleting just the `isTouchPhone()`
+  guard line while leaving the hook exposed fails the two behavioral
+  assertions ("phone → focus() NOT called"). Suite 325/0.
+  **Confirmed on the real device (2026-09-01):** merged to `main` and
+  deployed. Phone — logging an entry no longer pops the soft keyboard,
+  the on-screen "Log it" button is right there for the next tap. Laptop —
+  rapid keyboard entry unchanged.
+
 ## General fixes (2026-08-12)
 
 **Recurring items now render as one-line `.entryrow` rows with editing

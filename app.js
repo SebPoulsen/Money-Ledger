@@ -798,6 +798,28 @@ function refreshQuickAddCategories() {
   populateCategorySelect(quickAddCatSelect, quickDir, quickAddCatSelect.value);
 }
 
+// True only when we're confident this is a touch phone. Both conditions,
+// AND: narrow enough to be the app's single-column layout (reusing the
+// 1000px primary breakpoint from style.css) AND a coarse primary pointer
+// (touch, not a trackpad/mouse). A laptop — including a narrow/split-screen
+// window, or a touchscreen laptop whose primary pointer is still the
+// trackpad — fails at least one test and is treated as not-a-phone, which
+// is the safe direction (see "Quick-add design decisions" in CLAUDE.md).
+// The codebase's only matchMedia call; every other breakpoint is CSS-only.
+function isTouchPhone() {
+  return window.matchMedia("(max-width: 1000px) and (pointer: coarse)").matches;
+}
+
+// Send focus back to a ready-to-type amount field — but not on a phone,
+// where it just pops the soft keyboard back up right after a log, when the
+// on-screen "Log it" button is the natural next tap. Only the post-submit
+// refocus goes through here; the "Today" button and the FAB still focus
+// unconditionally (both are deliberate "about to type an amount" gestures).
+function maybeRefocusAmount() {
+  if (isTouchPhone()) return;
+  document.getElementById("qaAmount").focus();
+}
+
 function populateCategorySelect(select, direction, selectedId) {
   select.innerHTML = "";
   categoriesFor(direction).forEach((c) => {
@@ -901,8 +923,9 @@ function initQuickAdd() {
     // Enter in any quick-add field (amount, date, or note) already submits
     // the form via native implicit submission — this just sends focus back
     // to a ready-to-type amount field afterward, for logging several
-    // entries in a row without reaching for the mouse.
-    document.getElementById("qaAmount").focus();
+    // entries in a row without reaching for the mouse. Skipped on phones,
+    // where it would only pop the soft keyboard back up.
+    maybeRefocusAmount();
   });
 }
 
@@ -2548,6 +2571,12 @@ function exposeTestHook() {
     },
     saveState,
     renderAll,
+
+    // Phone detection + the post-log refocus guard that consumes it, so a
+    // test can assert whether .focus() fires given a mocked matchMedia
+    // (the hidden test iframe can't hold real focus — see "Quick-add
+    // design decisions" in CLAUDE.md).
+    isTouchPhone, maybeRefocusAmount,
 
     createEntry, editEntry, deleteEntry, undeleteEntry,
     createCategory, editCategory, deleteCategory, undeleteCategory,
