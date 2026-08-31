@@ -349,19 +349,32 @@ called out explicitly.
    Ledger, it may not be yours to fix at all — verify on a real device
    before spending time on it, and check whether it's already a known,
    time-bound platform issue before assuming the integration is broken.
-9. **The OAuth popup opening in the *wrong tab* on mobile (2026-08-30)** is
-   a *different* issue from #8 and is partly ours. Two causes: (a) page-load
-   token refresh calling `window.open` with no user activation — fixed, see
-   #7; (b) GIS reusing one frozen popup window name
-   (`g_auth_token_window_<random-fixed-at-script-eval>`) for a page's whole
-   lifetime, so on a long-lived pinned tab every connect/reconnect
-   `window.open`s the *same* name and the browser retargets whatever stale
-   tab still holds it. (b) is not fixable from the app — GIS owns the
-   name and the token client has no `ux_mode: redirect`. Mitigations
-   shipped: an `error_callback` on every token request (without one, GIS's
-   own closed-popup detection never arms and failures are silent), plus a
-   watchdog toast if neither callback fires within 120s. Expect the same on
-   Hours Ledger; wire `error_callback` in from the first connect commit.
+9. **The OAuth popup opening in the *wrong tab* on mobile (2026-08-30/31)**
+   is a *different* issue from #8 and is ours to fix. Two causes:
+   - (a) page-load token refresh calling `window.open` with no user
+     activation — fixed, see #7.
+   - (b) GIS builds one frozen popup window name
+     (`g_auth_token_window_<random-fixed-at-script-eval>`) per page load
+     and reuses it for every `requestAccessToken`. `window.open(url, name)`
+     retargets any existing tab with that name this page opened — **even
+     after that tab navigated cross-origin** (verified by direct test) —
+     as long as the opener link holds. On a pinned tab that never reloads,
+     the first OAuth tab it ever opened gets retargeted forever, wherever
+     it now is and whatever it now shows.
+   **Fix (2026-08-31):** wrap `window.open` so any `g_auth_token_window*`
+   name gets a unique `.<suffix>` appended → GIS opens a fresh window every
+   time, never retargets a stale one; also capture the handle and
+   `close()` it when the flow settles. Safe **only** because GIS never
+   reads the window name back (routing = origin + redirect_uri nonce +
+   client_id) — established by reading `gsi/client` source, not a public
+   contract. **Known fragility:** a future GIS change that correlates on
+   the name would make this wrapper silently stop working, with no error
+   and no test failure. Prefix is preserved so a prefix-based check still
+   matches. Also shipped: an `error_callback` on every token request
+   (without one GIS's closed-popup detection never arms and failures are
+   silent) + a 120s watchdog toast. Do all of this on Hours Ledger too;
+   wire `error_callback` and the `window.open` wrapper in from the first
+   connect commit.
 
 ### What to do differently, starting from scratch on Hours Ledger
 

@@ -1446,6 +1446,83 @@ function driveIsConfigured() {
   return !!GOOGLE_CLIENT_ID && typeof google !== "undefined" && google.accounts && google.accounts.oauth2;
 }
 
+// ---- Force GIS to open a FRESH OAuth popup window every time ------------
+//
+// GIS builds exactly one popup window name per page load —
+// `g_auth_token_window_<random>`, the random half fixed when gsi/client is
+// evaluated — and passes that same name to window.open() on every
+// requestAccessToken() call. window.open(url, name) retargets any existing
+// browsing context with that name that this page opened, *even after that
+// tab has navigated to a completely different origin* (confirmed by direct
+// test; it holds as long as the opener link isn't severed). On a
+// long-lived tab that never reloads (a pinned phone tab), that means the
+// very first OAuth tab this page ever opened gets retargeted forever —
+// wherever it now sits in the tab strip, whatever it now shows. Closing
+// "the dangling accounts.google.com tab" doesn't help: the persistent
+// thing is the *tab*, bound to that name for its whole life, not its
+// current contents.
+//
+// FRAGILITY (watch this): the fix rewrites the name GIS passes to
+// window.open so every call gets a brand-new window. This is safe ONLY
+// because GIS never reads the window name back — routing of the auth
+// result is by origin + a per-request nonce in the redirect_uri +
+// client_id, with the name used *solely* in the window.open() call. That
+// was confirmed by reading the current gsi/client source (2026-08-31), NOT
+// from any public API contract. If a future GIS update starts correlating
+// on the window name, this wrapper would silently stop preventing the
+// retarget — no error, no test failure (TEST_MODE never loads real GIS).
+// The prefix is preserved (only a `.<suffix>` is appended) so a
+// prefix-based GIS check would still match; only an exact-name check would
+// break. See CLAUDE.md "General fixes (2026-08-31)".
+const OAUTH_WINDOW_NAME_PREFIX = "g_auth_token_window";
+let lastOAuthWindow = null;
+let nativeWindowOpen =
+  typeof window !== "undefined" && typeof window.open === "function"
+    ? window.open.bind(window)
+    : null;
+
+// Pure: GIS's frozen popup name -> a unique one; every other name (and a
+// non-string) is returned untouched, so this only ever affects GIS.
+function freshOAuthWindowName(name) {
+  if (typeof name === "string" && name.indexOf(OAUTH_WINDOW_NAME_PREFIX) === 0) {
+    return name + "." + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  }
+  return name;
+}
+
+function openOAuthAwareWindow(url, name, features) {
+  const rewritten = freshOAuthWindowName(name);
+  const w = nativeWindowOpen ? nativeWindowOpen(url, rewritten, features) : null;
+  if (rewritten !== name) lastOAuthWindow = w || null; // only track GIS's popup
+  return w;
+}
+
+if (typeof window !== "undefined" && typeof window.open === "function") {
+  window.open = openOAuthAwareWindow;
+}
+
+// Close the OAuth popup we last opened, if it's still open. An opener can
+// always close() a window it opened, even one now showing a cross-origin
+// page (unlike reading its location). Called when a flow settles so fresh
+// windows don't pile up.
+function closeLastOAuthWindow() {
+  if (!lastOAuthWindow) return;
+  try {
+    if (!lastOAuthWindow.closed) lastOAuthWindow.close();
+  } catch (e) {
+    /* already gone, or a browser that refuses the close — nothing to do */
+  }
+  lastOAuthWindow = null;
+}
+
+// Every point where an auth flow stops mattering: cancel the watchdog and
+// drop the popup. Called from the success callback, the error callback,
+// and the watchdog itself.
+function settleDriveAuth() {
+  clearDriveAuthWatchdog();
+  closeLastOAuthWindow();
+}
+
 // errorCallback is not optional in practice: without an error_callback set,
 // GIS's own abandoned/closed-popup detection (`_.ug` in gsi/client) never
 // arms, so a blocked, closed, or misrouted popup produces no callback at
@@ -1710,25 +1787,25 @@ async function syncNow(showToast) {
   renderSettings();
 }
 
-// GIS reuses one popup window name for a page's whole lifetime (verified
-// against the real gsi/client: `g_auth_token_window_<random>`, the random
-// part fixed at script-eval time). On a long-lived mobile tab that never
-// reloads, a second requestAccessToken() therefore retargets the *first*
-// popup's tab — and if that tab lingered (mobile Chrome often ignores
-// GIS's window.close()), the auth result posts back to a stale opener and
-// neither callback ever fires. The watchdog is the floor under that: if
-// the flow produces no success and no error within the window, tell the
-// user rather than leaving them on a blank Google tab wondering.
+// GIS reuses one popup window name for a page's whole lifetime and mobile
+// Chrome often ignores GIS's window.close(), so an auth result can post
+// back to a stale opener and neither callback ever fires. The watchdog is
+// the floor under that: if the flow produces no success and no error
+// within the window, tell the user rather than leaving them on a blank
+// Google tab wondering, and drop the popup we opened.
 const DRIVE_AUTH_WATCHDOG_MS = 120000;
 let driveAuthWatchdog = null;
 
 function armDriveAuthWatchdog() {
   clearTimeout(driveAuthWatchdog);
-  driveAuthWatchdog = setTimeout(() => {
-    driveAuthWatchdog = null;
-    toast("Google sign-in didn't come back. Close any stray Google tab, then tap Reconnect again.");
-    renderSettings();
-  }, DRIVE_AUTH_WATCHDOG_MS);
+  driveAuthWatchdog = setTimeout(onDriveAuthWatchdogFired, DRIVE_AUTH_WATCHDOG_MS);
+}
+
+function onDriveAuthWatchdogFired() {
+  driveAuthWatchdog = null;
+  settleDriveAuth();
+  toast("Google sign-in didn't come back. Close any stray Google tab, then tap Reconnect again.");
+  renderSettings();
 }
 
 function clearDriveAuthWatchdog() {
@@ -1740,7 +1817,7 @@ function clearDriveAuthWatchdog() {
 // popup_failed_to_open, popup_closed (once armed — see driveTokenClientFor),
 // and other GIS-side errors.
 function driveAuthErrorCallback(err) {
-  clearDriveAuthWatchdog();
+  settleDriveAuth();
   const type = err && err.type ? err.type : "";
   if (type === "popup_closed") {
     toast("Google sign-in was cancelled.");
@@ -1752,25 +1829,38 @@ function driveAuthErrorCallback(err) {
   renderSettings();
 }
 
-function connectDrive() {
-  const client = driveTokenClientFor(async (resp) => {
-    clearDriveAuthWatchdog();
-    if (resp.error) {
-      toast("Google Drive connection was cancelled or failed.");
-      return;
-    }
-    driveAccessToken = resp.access_token;
-    saveDriveTokenCache(resp.access_token, resp.expires_in);
+// Shared success/failure handler for both connect and reconnect. isFirstConnect
+// distinguishes the two: only a first connect flips driveConnected + persists.
+function handleDriveAuthResult(resp, isFirstConnect) {
+  settleDriveAuth();
+  if (resp.error) {
+    toast(isFirstConnect
+      ? "Google Drive connection was cancelled or failed."
+      : "Reconnect failed — try again.");
+    return;
+  }
+  driveAccessToken = resp.access_token;
+  saveDriveTokenCache(resp.access_token, resp.expires_in);
+  return (async () => {
     try {
       await resolveDriveFileId();
-      state.settings.driveConnected = true;
-      saveState();
+      if (isFirstConnect) {
+        state.settings.driveConnected = true;
+        saveState();
+      }
       await syncNow(true);
     } catch (err) {
       console.error(err);
       toast("Couldn't reach Google Drive (" + (err && err.message ? err.message : err) + "). Try again in a moment.");
     }
-  }, driveAuthErrorCallback);
+  })();
+}
+
+function connectDrive() {
+  const client = driveTokenClientFor(
+    (resp) => handleDriveAuthResult(resp, true),
+    driveAuthErrorCallback
+  );
   // Armed BEFORE requestAccessToken: GIS calls error_callback synchronously
   // when window.open returns null (popup blocked), so arming after would
   // leave that timer running with nothing to clear it.
@@ -1779,22 +1869,10 @@ function connectDrive() {
 }
 
 function reconnectDrive() {
-  const client = driveTokenClientFor(async (resp) => {
-    clearDriveAuthWatchdog();
-    if (resp.error) {
-      toast("Reconnect failed — try again.");
-      return;
-    }
-    driveAccessToken = resp.access_token;
-    saveDriveTokenCache(resp.access_token, resp.expires_in);
-    try {
-      await resolveDriveFileId();
-      await syncNow(true);
-    } catch (err) {
-      console.error(err);
-      toast("Couldn't reach Google Drive (" + (err && err.message ? err.message : err) + "). Try again in a moment.");
-    }
-  }, driveAuthErrorCallback);
+  const client = driveTokenClientFor(
+    (resp) => handleDriveAuthResult(resp, false),
+    driveAuthErrorCallback
+  );
   armDriveAuthWatchdog();
   client.requestAccessToken({ prompt: "" });
 }
@@ -2400,6 +2478,7 @@ function exposeTestHook() {
       FAKE_DRIVE = {};
       fakeDriveNextId = 1;
       driveAccessToken = null;
+      lastOAuthWindow = null;
       registerCatFilter.clear();
       recurringCatFilter.clear();
       renderAll();
@@ -2430,6 +2509,15 @@ function exposeTestHook() {
     // assert "connected but no usable token -> wait for a tap, never a
     // popup" without touching Google Identity Services.
     pageLoadSyncPlan, saveDriveTokenCache, clearDriveTokenCache,
+
+    // OAuth-popup window-name wrapper + the settle paths that close it.
+    // setNativeWindowOpen swaps in a spy so a test can drive
+    // openOAuthAwareWindow without opening a real window.
+    freshOAuthWindowName, openOAuthAwareWindow, closeLastOAuthWindow,
+    driveAuthErrorCallback, onDriveAuthWatchdogFired, handleDriveAuthResult,
+    getLastOAuthWindow: () => lastOAuthWindow,
+    setLastOAuthWindow: (w) => { lastOAuthWindow = w; },
+    setNativeWindowOpen: (fn) => { nativeWindowOpen = fn; },
 
     syncNow, resolveDriveFileId, mergeRecords, sameContent, newerSide,
     ENTRY_CONTENT_FIELDS, CATEGORY_CONTENT_FIELDS, AMBIGUOUS_WINDOW_MS, DRIVE_FILE_NAME,
