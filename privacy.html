@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Money Ledger — Privacy</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  /* page-specific spacing only — no new colours, fonts, or components */
+  .privacy{max-width:680px;margin:0 auto}
+  .privacy section{margin:30px 0}
+  .privacy h2{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--ink);padding-bottom:6px;margin:0 0 12px;font-weight:600}
+  .privacy p{font-size:14px;line-height:1.6;margin:0 0 10px}
+  .privacy p:last-child{margin-bottom:0}
+  .privacy a{color:var(--ink)}
+  .privacy .lead{font-size:15px;line-height:1.6;color:var(--ink)}
+  .privacy code{font-family:var(--mono);font-size:.9em;background:var(--stripe);padding:1px 4px}
+  .backlink{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+  .masthead a.ghost{color:var(--ink);text-decoration:none}
+  .wordmark-btn{text-decoration:none}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <h1 class="wordmark"><a href="index.html" class="wordmark-btn">Money Ledger<span>where it actually goes</span></a></h1>
+    <div class="monthnav">
+      <a href="index.html" class="ghost">← Back to the ledger</a>
+    </div>
+  </header>
+
+  <div class="privacy">
+
+    <section>
+      <p class="lead">Money Ledger keeps your entries on your own device. It has no
+      server, no account, and no analytics. This page explains exactly what the
+      one optional feature that touches the network — Google Drive sync — does
+      with your data.</p>
+    </section>
+
+    <section>
+      <h2>What data the app touches</h2>
+      <p>By default, none of it leaves your browser. Your entries, categories,
+      and settings live in your browser's <code>localStorage</code> and nowhere
+      else.</p>
+      <p>If you choose to connect Google Drive sync, the app asks Google for the
+      <code>drive.file</code> scope only. That scope lets an app see just the
+      files it creates itself — it cannot see, list, or open anything else in
+      your Drive.</p>
+    </section>
+
+    <section>
+      <h2>What it's used for</h2>
+      <p>Only one thing: syncing your own ledger between your own devices — for
+      example, logging on your phone and reviewing on your laptop. The single
+      file the app creates in your Drive holds your entries and is written and
+      read only by Money Ledger running in your own browser.</p>
+    </section>
+
+    <section>
+      <h2>Where it's stored</h2>
+      <p>In two places you control: your browser's <code>localStorage</code>, and
+      — if you connect sync — your own Google Drive.</p>
+      <p>There is no server. Nothing under the developer's control ever receives,
+      stores, or is able to read your data. Sync happens directly between your
+      browser and your Drive.</p>
+    </section>
+
+    <section>
+      <h2>Sharing</h2>
+      <p>Your data is never shared, sold, or transmitted to any third party.
+      Nothing is collected beyond what the app needs to function, and nothing is
+      used for advertising, profiling, or tracking.</p>
+    </section>
+
+    <section>
+      <h2>Disconnecting</h2>
+      <p>You can disconnect Drive sync at any time from the app's Sync &amp;
+      settings panel. Disconnecting never deletes your local data — your entries
+      stay on the device. The file already in your Drive stays there until you
+      delete it yourself.</p>
+    </section>
+
+    <section>
+      <h2>Contact</h2>
+      <p>Questions about any of this: <a href="mailto:sebastian.vesterholm@gmail.com">sebastian.vesterholm@gmail.com</a></p>
+    </section>
+
+  </div>
+
+  <footer class="colophon">
+    <span>Money Ledger — free to use, free to pass on.</span>
+    <a href="index.html" class="backlink">← Back to the ledger</a>
+    <span class="right">Built by Sebastian Poulsen</span>
+  </footer>
+</div>
+
+</body>
+</html>

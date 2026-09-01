@@ -286,6 +286,7 @@ button{cursor:pointer}
   padding:5px 11px;font-family:var(--mono);font-size:11px;letter-spacing:.11em;text-transform:uppercase}
 .toast button:hover{background:var(--paper);color:var(--ink)}
 .hint{font-family:var(--mono);font-size:10.5px;line-height:1.7;color:var(--muted);margin-top:10px}
+.hint a{color:var(--ink)}
 .warn{border:1px solid var(--flag);color:var(--flag);padding:8px 10px;font-family:var(--mono);font-size:11px;margin-bottom:14px;display:none;line-height:1.6}
 
 .scrim{position:fixed;inset:0;background:rgba(22,33,27,.5);display:none;align-items:center;justify-content:center;padding:20px;z-index:40}
@@ -306,6 +307,7 @@ button{cursor:pointer}
 .intro-steps li{counter-increment:s;position:relative;padding-left:30px;margin-bottom:13px;font-size:14px;line-height:1.5}
 .intro-steps li::before{content:counter(s,decimal-leading-zero);position:absolute;left:0;top:1px;font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.08em}
 .intro-note{font-family:var(--mono);font-size:11px;line-height:1.7;color:var(--muted);border-top:1px solid var(--rule);padding-top:12px}
+.intro-note a{color:var(--ink)}
 
 .colophon{border-top:1px solid var(--ink);margin-top:44px;padding:14px 0 0;display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 20px;align-items:baseline;font-family:var(--mono);font-size:11px;color:var(--muted)}
 .colophon a{color:var(--ink)}
