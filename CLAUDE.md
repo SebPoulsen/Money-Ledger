@@ -1704,6 +1704,22 @@ Do not add features that are not on this list without discussing them first.
     there too — mirrored in Hours Ledger's own CLAUDE.md rather than only
     living here, since neither app's verification has actually been
     submitted as of this date.
+  - **Privacy policy page shipped (2026-09-01):** `privacy.html` — plain
+    language, no legalese, reuses `style.css` wholesale (no separate
+    stylesheet). Covers what Drive sync touches (`drive.file` scope only),
+    what it's for (syncing the user's own ledger between their own
+    devices), where data lives (their `localStorage` + their own Drive, no
+    server ever in the loop), no sharing/selling, disconnect-anytime
+    without local data loss, and a contact address. Linked from three
+    places (the intro popup's note, the Sync &amp; settings hint, and the
+    colophon) — three because the intro popup is skipped once `introSeen`
+    is set, so it can't be the only discovery path. Real-device verified
+    on a phone over LAN (not localhost) before merge: all three links
+    resolve, and the page itself reads well at phone width. Merged to
+    `main` (`1899707`) and confirmed live on GitHub Pages by hashing the
+    served files against local. This satisfies the privacy-policy-page
+    dependency for the brand-verification path above — still not submitted,
+    but no longer blocked on this piece.
 - GitHub Gist was considered and rejected as the sync target over Google
   Drive: a "secret" gist is unlisted, not access-controlled — anyone with
   the URL can read it. Worth revisiting only if a stronger case for it shows
