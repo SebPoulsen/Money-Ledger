@@ -6,7 +6,7 @@ It deliberately is not a bank-linked auto-importer — typing every entry in
 yourself is the point, not a limitation, the same way Hours Ledger makes you
 log the week you actually had rather than infer it.
 
-This is the second tool in a family with [Hours Ledger](https://sebpoulsen.github.io/Hours-Ledger)
+This is the second tool in a family with [Hours Ledger](https://groundwork-tools.github.io/Hours-Ledger)
 — same method (log reality, judge it after), applied to money instead of time.
 It should look like it belongs next to Hours Ledger: same colours, same type,
 same ledger-paper, square-cornered plainness — not a reskin, since money has
@@ -1013,7 +1013,7 @@ path was then fixed outright — see "General fixes (2026-08-31)".
 not merge" branch commit does **nothing** for on-device testing — GitHub
 Pages serves `main`. Before asking for a real-device check, the fix must
 be on `main` and deployed; verify with
-`curl https://sebpoulsen.github.io/Money-Ledger/app.js | grep <new-symbol>`,
+`curl https://groundwork-tools.github.io/Money-Ledger/app.js | grep <new-symbol>`,
 not by assuming.
 
 **Update (2026-08-31): the deliberate-tap wrong-window bug turned out to
