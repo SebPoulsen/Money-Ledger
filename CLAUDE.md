@@ -1181,6 +1181,17 @@ re-prompt) was **not** force-tested; it'll be exercised naturally on a
 future real expiry. Its logic is covered by the self-test (`flag survives
 a dismissed attempt` → still `"skip-already-attempted"`).
 
+## General fixes (2026-09-05)
+
+**Org transfer, SebPoulsen → Groundwork-tools.** Repo transferred and all
+hardcoded links (OG images, README, cross-links, sync scripts) updated
+accordingly. Google OAuth authorized origins updated to
+`groundwork-tools.github.io` (old `sebpoulsen.github.io` origin removed
+after real-device sync confirmed working on both apps). As reported by
+Sebastian — the OAuth console change and the real-device confirmation
+happened outside this tool session, so they're recorded here on his word,
+not independently verified from here.
+
 ## Testing before you claim it works
 
 There is an automated self-test suite — `money-ledger-selftest.html`,
