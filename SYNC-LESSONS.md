@@ -378,6 +378,42 @@ called out explicitly.
    (2026-08-31):** five disconnect→reconnect cycles in a row, picker
    opened + completed + returned to "Synced to Drive" every time, no
    stale-tab retargeting, no dead tabs piling up.
+10. **A connect that silently does nothing after the account picker is not
+    automatically a Google Cloud config problem — check for a stuck/corrupted
+    locally-cached token first (2026-09-03).** Symptom: on Chrome for iPhone,
+    tapping through the Google account picker and pressing Continue loaded
+    the page and then did nothing — no error shown, no completed connection.
+    Money Ledger's Drive connection was fully broken on that device;
+    disconnecting and running local-only restored normal logging immediately
+    (logging itself was never affected — it worked locally the whole time).
+    The diagnosis that found it, in the order the splits were made:
+    - **Ruled out the Google Cloud project first.** Drive API quota was at
+      0% usage, nowhere near any limit; the OAuth client's Authorized
+      JavaScript origins were correct with no typos. Neither was the cause.
+    - **Laptop vs. phone:** reconnecting on laptop Chrome worked immediately
+      and synced cleanly — same project, same Client ID as the phone. This
+      ruled out anything at the Cloud-project or app-code level.
+    - **Phone browser vs. browser:** the exact same connect flow worked fine
+      in Safari on the same iPhone. Not a phone-wide or iOS-wide issue —
+      narrowed to Chrome on iOS specifically.
+    - **Sibling app cross-check:** Hours Ledger (same GIS token-flow
+      pattern) connected fine in Chrome on the same phone. Not a Chrome-iOS
+      platform-wide GIS problem, since an identical pattern worked in the
+      same browser for the sibling app.
+    - **That left Money Ledger's own cached state.** Per #7 above, Money
+      Ledger caches its Drive access token in `localStorage` (its own key)
+      to skip a Google round-trip on reload. A stuck or corrupted cached
+      token there is invisible to every check above.
+    **The fix:** clear Chrome's site data for the app (Settings → Privacy →
+    Clear Browsing Data — a short time range is enough), reopen the app
+    fresh, reconnect Drive from a clean state. Resolved it immediately;
+    Drive reconnected and synced normally afterward. **Takeaway:** when the
+    same connect flow works on a different device or browser on the exact
+    same account, suspect a locally-cached token before touching Cloud
+    Console (quota, origins, verification status). Splitting device →
+    browser → sibling-app narrowed this to the real cause in a few steps
+    instead of guessing at Cloud Console settings. Do the same triage on
+    Hours Ledger if its connect ever silently stalls after the picker.
 
 ### What to do differently, starting from scratch on Hours Ledger
 
